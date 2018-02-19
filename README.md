@@ -9,9 +9,9 @@ CLIPPER ROM images and COFF object/executable files._
 [This plugin](clipper.py) disassembles CLIPPER assembly code and generates LLIL.
 
 The plugin also contains two binary views, the [first](rom.py) of which is able
-to load Intergraph InterPro computer system boot and flash ROM images,
-with the [second](coff.py) designed to handle COFF executable and object files as
-used by CLIX (UNIX SYSVR3 for CLIPPER systems).
+to load InterPro computer system boot and flash ROM images, with the [second](coff.py)
+designed to handle COFF executable and object files as used by CLIX (UNIX SYSVR3
+for CLIPPER systems).
 
 The CLIPPER architecture plugin has the following known issues:
 
