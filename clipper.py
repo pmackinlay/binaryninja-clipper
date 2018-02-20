@@ -251,8 +251,9 @@ Instructions = {
 	0xac:['notw', register, [OperandType.R1, OperandType.R2]],
 	0xae:['notq', register, [OperandType.QUICK, OperandType.R2]],
 
-    #0xb0:['abss', register],
-    #0xb2:['absd', register],
+    0xb0:['abss', register, [OperandType.F1, OperandType.F2]],
+    0xb2:['absd', register, [OperandType.F1, OperandType.F2]],
+
     0xbc:['waitd', register, []],
 
     0xc0:['s*', register, [OperandType.R1]]
@@ -358,13 +359,7 @@ def shift_helper(il, r1, r2, positive, negative, long, length):
     if long:
         il.append(il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], positive(
             8, 
-            il.or_expr(
-                8,
-                il.reg(4, IReg[r2 + 0]), 
-                il.shift_left(
-                    8, 
-                    il.reg(4, IReg[r2 + 1]), 
-                    il.const(4, 32))), 
+            il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
             il.reg(4, IReg[r1]), '*')))
     else:
         il.append(il.set_reg(4, IReg[r2], positive(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')))
@@ -375,13 +370,7 @@ def shift_helper(il, r1, r2, positive, negative, long, length):
     if long:
         il.append(il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], negative(
             8, 
-            il.or_expr(
-                8,
-                il.reg(4, IReg[r2 + 0]), 
-                il.shift_left(
-                    8, 
-                    il.reg(4, IReg[r2 + 1]), 
-                    il.const(4, 32))), 
+            il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
             il.neg_expr(4, il.reg(4, IReg[r1])), '*')))
     else:
         il.append(il.set_reg(4, IReg[r2], negative(4, il.reg(4, IReg[r2]), il.neg_expr(4, il.reg(4, IReg[r1])), '*')))
@@ -549,15 +538,11 @@ def address_operand(il, r1, rx, constant, mode):
         return il.add(4, il.reg(4, IReg[r1]), il.reg(4, IReg[rx]))
 
 # CLIPPER instruction Low Level Intermediate Language map
-# TODO
-#   - floating point operations
-#   - stack instructions with non-standard stack pointer
-#   - system calls
 InstructionIL = {
     'noop': lambda il, r1, r2, rx, constant, mode, length:
         il.nop(),
     'movwp': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, 'psw' if r1 == 0 else 'ssw', il.reg(4, IReg[r2]), '*'),
+        il.set_reg(4, 'psw', il.reg(4, IReg[r2]), '*') if r1 == 0 else il.set_reg(4, 'ssw', il.reg(4, IReg[r2])),
     'movpw': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, 'psw' if r1 == 0 else 'ssw')),
     'calls': lambda il, r1, r2, rx, constant, mode, length:
@@ -573,20 +558,30 @@ InstructionIL = {
         il.set_reg(4, IReg[r2], il.pop(4)) if r1 == 15 else il.unimplemented(),
 
     # fp operations
-    #'adds': lambda il, r1, r2, rx, constant, mode, length:
-    #'subs': lambda il, r1, r2, rx, constant, mode, length:
-    #'addd': lambda il, r1, r2, rx, constant, mode, length:
-    #'subd': lambda il, r1, r2, rx, constant, mode, length:
+    'adds': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_add(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
+    'subs': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_sub(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
+    'addd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_add(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
+    'subd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_sub(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
     'movs': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.reg(4, FPReg[r1])),
-    #'cmps': lambda il, r1, r2, rx, constant, mode, length:
+    'cmps': lambda il, r1, r2, rx, constant, mode, length:
+        il.float_sub(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), '*'),
     'movd': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.reg(8, FPReg[r1])),
-    #'cmpd': lambda il, r1, r2, rx, constant, mode, length:
-    #'muls': lambda il, r1, r2, rx, constant, mode, length:
-    #'divs': lambda il, r1, r2, rx, constant, mode, length:
-    #'muld': lambda il, r1, r2, rx, constant, mode, length:
-    #'divd': lambda il, r1, r2, rx, constant, mode, length:
+    'cmpd': lambda il, r1, r2, rx, constant, mode, length:
+        il.float_sub(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), '*'),
+    'muls': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_mult(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
+    'divs': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_div(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
+    'muld': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_mult(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
+    'divd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_div(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
     'movsw': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, FPReg[r1])),
     'movws': lambda il, r1, r2, rx, constant, mode, length:
@@ -594,13 +589,7 @@ InstructionIL = {
     'movdl': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.reg(8, FPReg[r1])),
     'movld': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(
-            8, 
-            FPReg[r2], 
-            il.or_expr(
-                8,
-                il.reg(4, IReg[r1 + 0]), 
-                il.shift_left(8, il.reg(4, IReg[r1 + 1]), il.const(4, 32)))),
+        il.set_reg(8, FPReg[r2], il.reg_split(4, IReg[r1 + 1], IReg[r1 + 0])),
 
     'shaw': lambda il, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.shift_left, il.arith_shift_right, False, length),
@@ -616,81 +605,45 @@ InstructionIL = {
         shift_helper(il, r1, r2, il.rotate_left, il.rotate_right, True, length),
     'shai': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], 
-            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant)) if constant > 0 else
-            il.arith_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant)), '*'),
+            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), '*') if constant > 0 else
+            il.arith_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), '*')),
     'shali': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.shift_left(
                 8, 
-                il.or_expr(
-                    8,
-                    il.reg(4, IReg[r2 + 0]), 
-                    il.shift_left(
-                        8, 
-                        il.reg(4, IReg[r2 + 1]), 
-                        il.const(4, 32))), 
+                il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, constant), '*') if constant > 0 else
             il.arith_shift_right(
                 8, 
-                il.or_expr(
-                    8,
-                    il.reg(4, IReg[r2 + 0]), 
-                    il.shift_left(
-                        8, 
-                        il.reg(4, IReg[r2 + 1]), 
-                        il.const(4, 32))), 
+                il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, -constant), '*')),
     'shli': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2],
-            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant)) if constant > 0 else
-            il.logical_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant)), '*'),
+            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), '*') if constant > 0 else
+            il.logical_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), '*')),
     'shlli': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.shift_left(
                 8, 
-                il.or_expr(
-                    8,
-                    il.reg(4, IReg[r2 + 0]), 
-                    il.shift_left(
-                        8, 
-                        il.reg(4, IReg[r2 + 1]), 
-                        il.const(4, 32))), 
+                il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, constant), '*') if constant > 0 else
             il.logical_shift_right(
                 8, 
-                il.or_expr(
-                    8,
-                    il.reg(4, IReg[r2 + 0]), 
-                    il.shift_left(
-                        8, 
-                        il.reg(4, IReg[r2 + 1]), 
-                        il.const(4, 32))), 
+                il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, -constant), '*')),
     'roti': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], 
-            il.rotate_left(4, il.reg(4, IReg[r2]), il.const(4, constant)) if constant > 0 else
-            il.rotate_right(4, il.reg(4, IReg[r2]), il.const(4, -constant)), '*'),
+            il.rotate_left(4, il.reg(4, IReg[r2]), il.const(4, constant), '*') if constant > 0 else
+            il.rotate_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), '*')),
     'rotli': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.rotate_left(
                 8, 
-                il.or_expr(
-                    8,
-                    il.reg(4, IReg[r2 + 0]), 
-                    il.shift_left(
-                        8, 
-                        il.reg(4, IReg[r2 + 1]), 
-                        il.const(4, 32))), 
+                il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, constant), '*') if constant > 0 else
             il.rotate_right(
                 8, 
-                il.or_expr(
-                    8,
-                    il.reg(4, IReg[r2 + 0]), 
-                    il.shift_left(
-                        8, 
-                        il.reg(4, IReg[r2 + 1]), 
-                        il.const(4, 32))), 
+                il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, -constant), '*')),
     
     'call': lambda il, r1, r2, rx, constant, mode, length:
@@ -712,11 +665,11 @@ InstructionIL = {
     'loadb': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.sign_extend(4, il.load(1, address_operand(il, r1, rx, constant, mode)))),
     'loadbu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.load(1, address_operand(il, r1, rx, constant, mode))),
+        il.set_reg(4, IReg[r2], il.zero_extend(4, il.load(1, address_operand(il, r1, rx, constant, mode)))),
     'loadh': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.sign_extend(4, il.load(2, address_operand(il, r1, rx, constant, mode)))),
     'loadhu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.load(2, address_operand(il, r1, rx, constant, mode))),
+        il.set_reg(4, IReg[r2], il.zero_extend(4, il.load(2, address_operand(il, r1, rx, constant, mode)))),
 
     'storw': lambda il, r1, r2, rx, constant, mode, length:
         il.store(4, address_operand(il, r1, rx, constant, mode), il.reg(4, IReg[r2])),
@@ -735,12 +688,12 @@ InstructionIL = {
         
     'addw': lambda il, r1, r2, rx, constant, mode, length:
         # hack to use left shift when r1==r2 (preserves BN branch table detection)
-        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*') if r1 != r2 else
+        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')) if r1 != r2 else
         il.set_reg(4, IReg[r2], il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, 1), '*')),
     'addq': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, r1)), '*'),
+        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, r1), '*')),
     'addi': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
+        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
     'movw': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, IReg[r1]), '*'),
     'loadq': lambda il, r1, r2, rx, constant, mode, length:
@@ -748,43 +701,43 @@ InstructionIL = {
     'loadi': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, constant), '*'),
     'andw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'andi': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
+        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
     'orw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'ori': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
+        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
 
     'addwc': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.add_carry(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c')), '*'),
+        il.set_reg(4, IReg[r2], il.add_carry(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), '*')),
     'subwc': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub_borrow(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c')), '*'),
+        il.set_reg(4, IReg[r2], il.sub_borrow(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), '*')),
     'negw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.neg_expr(4, il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.neg_expr(4, il.reg(4, IReg[r1]), '*')),
     'mulw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'mulwx': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.mult_double_prec_signed(8, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.mult_double_prec_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'mulwu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'mulwux': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.mult_double_prec_unsigned(8, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.mult_double_prec_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'divw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.div_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.div_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'modw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.mod_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.mod_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'divwu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.div_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.div_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'modwu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.mod_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.mod_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
         
     'subw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'subq': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, r1)), '*'),
+        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, r1), '*')),
     'subi': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
+        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
     'cmpw': lambda il, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*'),
     'cmpq': lambda il, r1, r2, rx, constant, mode, length:
@@ -792,13 +745,18 @@ InstructionIL = {
     'cmpi': lambda il, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), '*'),
     'xorw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'xori': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
+        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
     'notw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.not_expr(4, il.reg(4, IReg[r1])), '*'),
+        il.set_reg(4, IReg[r2], il.not_expr(4, il.reg(4, IReg[r1]), '*')),
     'notq': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, ~r1), '*'),
+
+    'abss': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_abs(4, il.reg(4, FPReg[r1]))),
+    'absd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_abs(8, il.reg(8, FPReg[r1]))),
 
     'waitd': lambda il, r1, r2, rx, constant, mode, length:
         il.nop(),
@@ -875,6 +833,63 @@ InstructionIL = {
     'restw12': lambda il, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(12, 15) ],
     
+    'saved0': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, -1, -1) ],
+	'saved1': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 0, -1) ],
+	'saved2': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 1, -1) ],
+	'saved3': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 2, -1) ],
+	'saved4': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 3, -1) ],
+	'saved5': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 4, -1) ],
+	'saved6': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 5, -1) ],
+	'saved7': lambda il, r1, r2, rx, constant, mode, length:
+        [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 6, -1) ],
+	'restd0': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(0, 8) ],
+	'restd1': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(1, 8) ],
+	'restd2': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(2, 8) ],
+	'restd3': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(3, 8) ],
+	'restd4': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(4, 8) ],
+	'restd5': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(5, 8) ],
+	'restd6': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(6, 8) ],
+	'restd7': lambda il, r1, r2, rx, constant, mode, length:
+        [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(7, 8) ],
+
+    # TODO: non-standard floating point rounding instructions
+    'cnvsw': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.float_to_int(4, il.reg(4, FPReg[r1]), 'fxi')),
+	#'cnvrsw': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvtsw': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.float_trunc(4, il.reg(4, FPReg[r1]), 'fxi')),
+	'cnvws': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.int_to_float(4, il.reg(4, IReg[r1]), 'fx')),
+	'cnvdw': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.float_to_int(4, il.reg(8, FPReg[r1]), 'fxi')),
+	#'cnvrdw': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvtdw': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.float_trunc(4, il.reg(8, FPReg[r1]), 'fxi')),
+	'cnvwd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.int_to_float(8, il.reg(4, IReg[r1]))),
+	'cnvsd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_convert(8, il.reg(4, FPReg[r1]), 'fi')),
+	'cnvds': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_convert(4, il.reg(8, FPReg[r1]), 'fxuvi')),
+    'negs': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, FPReg[r2], il.float_neg(4, il.reg(4, FPReg[r1]))),
+    'negd': lambda il, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.float_neg(8, il.reg(8, FPReg[r1]))),
+
     'movus': lambda il, r1, r2, rx, constant, mode, length:
         il.nop(),
     'movsu': lambda il, r1, r2, rx, constant, mode, length:
@@ -940,34 +955,39 @@ class CLIPPER(Architecture):
         'ssw': RegisterInfo('ssw', 4)
     }
 
-    flags = ['c', 'v', 'z', 'n']
+    flags = ['n', 'z', 'v', 'c', 'fx', 'fu', 'fd', 'fv', 'fi']
 
     # The first flag write type is ignored currently.
     # See: https://github.com/Vector35/binaryninja-api/issues/513
-    flag_write_types = ['', '*', 'n']
+    flag_write_types = ['', '*', 'n', 'f*', 'fx', 'fi','fxi','fxuvi']
 
     flags_written_by_flag_write_type = {
-        '*': ['c', 'v', 'z', 'n'],
-        'n': ['n']
+        '*': ['n', 'z', 'v', 'c'],
+        'n': ['n'],
+        'f*': ['fx', 'fu', 'fd', 'fv', 'fi'],
+        'fx': ['fx'],
+        'fi': ['fi'],
+        'fxi': ['fx','fi'],
+        'fxuvi': ['fx','fu','fv','fi']
     }
     flag_roles = {
-        'c': FlagRole.CarryFlagRole,
-        'v': FlagRole.OverflowFlagRole,
+        'n': FlagRole.NegativeSignFlagRole,
         'z': FlagRole.ZeroFlagRole,
-        'n': FlagRole.NegativeSignFlagRole
+        'v': FlagRole.OverflowFlagRole,
+        'c': FlagRole.CarryFlagRole
     }
     flags_required_for_flag_condition = {
-        LowLevelILFlagCondition.LLFC_E:   ['z', 'n'],
-        LowLevelILFlagCondition.LLFC_NE:  ['z', 'n'],
-        LowLevelILFlagCondition.LLFC_SLT: ['v', 'z', 'n'],
-        LowLevelILFlagCondition.LLFC_ULT: ['c', 'z'],
-        LowLevelILFlagCondition.LLFC_SLE: ['v', 'z', 'n'],
+        LowLevelILFlagCondition.LLFC_E:   ['n', 'z'],
+        LowLevelILFlagCondition.LLFC_NE:  ['n', 'z'],
+        LowLevelILFlagCondition.LLFC_SLT: ['n', 'z', 'v'],
+        LowLevelILFlagCondition.LLFC_ULT: ['z', 'c'],
+        LowLevelILFlagCondition.LLFC_SLE: ['n', 'z', 'v'],
         LowLevelILFlagCondition.LLFC_ULE: ['c'],
-        LowLevelILFlagCondition.LLFC_SGE: ['v', 'z', 'n'],
-        LowLevelILFlagCondition.LLFC_UGE: ['c', 'z'],
-        LowLevelILFlagCondition.LLFC_SGT: ['v', 'z', 'n'],
+        LowLevelILFlagCondition.LLFC_SGE: ['n', 'z', 'v'],
+        LowLevelILFlagCondition.LLFC_UGE: ['z', 'c'],
+        LowLevelILFlagCondition.LLFC_SGT: ['n', 'z', 'v'],
         LowLevelILFlagCondition.LLFC_UGT: ['c'],
-        LowLevelILFlagCondition.LLFC_NEG: ['z', 'n'],
+        LowLevelILFlagCondition.LLFC_NEG: ['n', 'z'],
         LowLevelILFlagCondition.LLFC_POS: ['n'],
         LowLevelILFlagCondition.LLFC_O:   ['v'],
         LowLevelILFlagCondition.LLFC_NO:  ['v']

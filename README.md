@@ -17,7 +17,6 @@ The CLIPPER architecture plugin has the following known issues:
 
 * Stack operations using registers other than r15 are not implemented.
 * Incomplete handling of condition codes/flags.
-* No support for floating point instructions.
 * System calls are not fully implemented.
 * Some C400 instructions are unimplemented, especially delayed branches.
 
@@ -41,7 +40,7 @@ To install this plugin, navigate to your Binary Ninja plugins directory, and run
 
 This plugin requires the following minimum version of Binary Ninja:
 
- * release - 1.1.1038
+ * release - 1.1.1057
 
 ## License
 
