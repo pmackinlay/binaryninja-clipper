@@ -2,6 +2,7 @@ import struct
 import traceback
 import enum
 import types
+import os.path
 
 from binaryninja.architecture import Architecture
 from binaryninja.binaryview import BinaryView
@@ -60,8 +61,6 @@ class COFF(BinaryView):
         self.platform =  Architecture['clipper'].standalone_platform 
         self.plat = Architecture['clipper'].standalone_platform
 
-        self.raw = data
-
     @classmethod
     def is_valid_for_data(self, data):
         header = data.read(0,20)
@@ -77,28 +76,27 @@ class COFF(BinaryView):
     def init(self):
         try:
             # file header
-            (f_magic, f_nscns, f_timdat, f_symptr, f_nsyms, f_opthdr, self.f_flags) = struct.unpack('<2H3L2H', self.raw.read(0, ElementSize.FILE))
+            (f_magic, f_nscns, f_timdat, f_symptr, f_nsyms, f_opthdr, self.f_flags) = struct.unpack('<2H3L2H', self.parent_view.read(0, ElementSize.FILE))
             log_info('file header: f_magic 0x{:x} f_nscns {} f_symptr 0x{:x} f_nsyms {} f_opthdr {} f_flags 0x{:x}'.format(
                 f_magic, f_nscns, f_symptr, f_nsyms, f_opthdr, self.f_flags))
 
             # optional header (not present in object files)
             if f_opthdr == ElementSize.OPTIONAL:
                 (magic, version, tsize, dsize, bsize, self.entry, text_start, data_start, clipper_flags) = struct.unpack(
-                    '<2H6L8s', self.raw.read(ElementSize.FILE, ElementSize.OPTIONAL))
+                    '<2H6L8s', self.parent_view.read(ElementSize.FILE, ElementSize.OPTIONAL))
                 log_info('optional header: magic 0x{:x} version 0x{:x} tsize 0x{:x} dsize 0x{:x} bsize 0x{:x} entry 0x{:x} text_start 0x{:x} data_start 0x{:x}'.format(
                     magic, version, tsize, dsize, bsize, self.entry, text_start, data_start))
 
                 self.add_entry_point(self.entry)
 
-            sections = {}
             # section headers
-            for section in range(f_nscns):
+            for section_number in range(f_nscns):
                 (s_name, s_paddr, s_vaddr, s_size, s_scnptr, s_relptr, s_lnnoptr, s_nreloc, s_nlnno, s_flags) = struct.unpack(
-                    '<8s6L2HL', self.raw.read(ElementSize.FILE + f_opthdr + section * ElementSize.SECTION, ElementSize.SECTION))
+                    '<8s6L2HL', self.parent_view.read(ElementSize.FILE + f_opthdr + section_number * ElementSize.SECTION, ElementSize.SECTION))
                 s_name = s_name.split('\0', 1)[0]
                 
                 log_info('section header: section {} name {} s_paddr 0x{:x} s_vaddr 0x{:x} s_size 0x{:x} s_scnptr 0x{:x} s_nreloc {} s_flags 0x{:x}'.format(
-                    section + 1, s_name, s_paddr, s_vaddr, s_size, s_scnptr, s_nreloc, s_flags))
+                    section_number + 1, s_name, s_paddr, s_vaddr, s_size, s_scnptr, s_nreloc, s_flags))
 
                 map_section = False
                 segment_flags = SegmentFlag.SegmentReadable
@@ -127,7 +125,7 @@ class COFF(BinaryView):
                     segment_flags |= SegmentFlag.SegmentContainsData
                     section_flags = SectionSemantics.ReadOnlyDataSectionSemantics
 
-                    log_info('  content: {}'.format(self.raw.read(s_scnptr, s_size).split('\0', 1)[0]))
+                    log_info('  content: {}'.format(self.parent_view.read(s_scnptr, s_size).split('\0', 1)[0]))
 
                 # .lib
                 if s_flags & SectionType.LIB:
@@ -136,11 +134,11 @@ class COFF(BinaryView):
 
                     offset = s_scnptr
                     for library in range(s_paddr):
-                        (entsize, entoff) = struct.unpack('<LL', self.raw.read(offset, 8))
-                        lib_path = self.raw.read(offset + 8 + (entoff - 2) * 4, (entsize - entoff) * 4)
+                        (entsize, entoff) = struct.unpack('<LL', self.parent_view.read(offset, 8))
+                        lib_path = self.parent_view.read(offset + 8 + (entoff - 2) * 4, (entsize - entoff) * 4)
                         offset += entsize * 4
 
-                        log_info('  shared library: path {}'.format(lib_path.split('\0', 1)[0]))
+                        self.load_library_symbols(lib_path.split('\0', 1)[0])
 
                 # load segments which have a virtual address, a section pointer and are not marked noload
                 if map_section and s_scnptr and not s_flags & SectionType.NOLOAD:
@@ -154,15 +152,13 @@ class COFF(BinaryView):
                 if map_section:
                     self.add_auto_section(s_name, s_vaddr, s_size, section_flags)
 
-                sections[section + 1] = {'name': s_name, 'semantics': section_flags}
-
             # TODO: relocations
 
             # symbols
             if not self.f_flags & FileHeaderFlags.LSYMS and f_symptr and f_nsyms:
                 # read the string table
-                stable_size = struct.unpack('<L', self.raw.read(f_symptr + f_nsyms * ElementSize.SYMBOL, 4))[0]
-                string_table = self.raw.read(f_symptr + f_nsyms * ElementSize.SYMBOL, stable_size)
+                stable_size = struct.unpack('<L', self.parent_view.read(f_symptr + f_nsyms * ElementSize.SYMBOL, 4))[0]
+                string_table = self.parent_view.read(f_symptr + f_nsyms * ElementSize.SYMBOL, stable_size)
 
                 log_info('symbol table')
                 log_info('{:32}    n_value n_scnum n_type n_sclass n_numaux'.format('n_name'))
@@ -170,31 +166,31 @@ class COFF(BinaryView):
                 n_scnum = 0
                 n_numaux = 0
 
-                for symbol in range(f_nsyms):
+                for symbol_number in range(f_nsyms):
                     # handle auxiliary entries
                     if n_numaux:
                         # x_sym type
-                        #(x_tagndx, x_lnno, x_size, x_lnnoptr, x_endndx, x_tvndx) = struct.unpack('<lHHllH', self.raw.read(f_symptr + symbol * ElementSize.AUXILIARY, ElementSize.AUXILIARY))
-                        #log_info('auxent {}: x_tagndx {} x_lnno {} x_size {} x_lnnoptr {} x_endndx {} x_tvndx {}'.format(symbol, x_tagndx, x_lnno, x_size, x_lnnoptr, x_endndx, x_tvndx))
+                        #(x_tagndx, x_lnno, x_size, x_lnnoptr, x_endndx, x_tvndx) = struct.unpack('<lHHllH', self.parent_view.read(f_symptr + symbol_number * ElementSize.AUXILIARY, ElementSize.AUXILIARY))
+                        #log_info('auxent {}: x_tagndx {} x_lnno {} x_size {} x_lnnoptr {} x_endndx {} x_tvndx {}'.format(symbol_number, x_tagndx, x_lnno, x_size, x_lnnoptr, x_endndx, x_tvndx))
 
                         # x_file type
                         if n_scnum == -2:
-                            x_fname = self.raw.read(f_symptr + symbol * ElementSize.SYMBOL, ElementSize.SYMBOL)
+                            x_fname = self.parent_view.read(f_symptr + symbol_number * ElementSize.SYMBOL, ElementSize.SYMBOL)
                             log_info('  x_fname: {}'.format(x_fname.split('\0', 1)[0]))
                         # x_scn type
                         elif n_name[0] == '.':
-                            (x_scnlen, x_nreloc, x_nlinno) = struct.unpack('<lHH', self.raw.read(
-                                f_symptr + symbol * ElementSize.SYMBOL, 8))
+                            (x_scnlen, x_nreloc, x_nlinno) = struct.unpack('<lHH', self.parent_view.read(
+                                f_symptr + symbol_number * ElementSize.SYMBOL, 8))
                             log_info('  x_scnlen 0x{:x} x_nreloc {} x_nlinno {}'.format(x_scnlen, x_nreloc, x_nlinno))
 
                         # x_tv type (transfer vector)
-                        #(x_tvfill, x_tvlen, x_tvran0, x_tvran1) = struct.unpack('<lHHH', self.raw.read(f_symptr + symbol * ElementSize.AUXILIARY, ElementSize.AUXILIARY))
+                        #(x_tvfill, x_tvlen, x_tvran0, x_tvran1) = struct.unpack('<lHHH', self.parent_view.read(f_symptr + symbol_number * ElementSize.AUXILIARY, ElementSize.AUXILIARY))
 
                         n_numaux -= 1
                         continue
 
-                    (n_name, n_value, n_scnum, n_type, n_sclass, n_numaux) = struct.unpack('<8sLhHbb', self.raw.read(
-                        f_symptr + symbol * ElementSize.SYMBOL, ElementSize.SYMBOL))
+                    (n_name, n_value, n_scnum, n_type, n_sclass, n_numaux) = struct.unpack('<8sLhHbb', self.parent_view.read(
+                        f_symptr + symbol_number * ElementSize.SYMBOL, ElementSize.SYMBOL))
 
                     # use the name as-is or look it up in the string table
                     (n_zeros, n_offset) = struct.unpack('<ll', n_name)
@@ -203,13 +199,20 @@ class COFF(BinaryView):
                     log_info('{:32} 0x{:08x} {:7} 0x{:04x}     0x{:02x}     0x{:02x}'.format(
                         name, n_value, n_scnum, n_type, n_sclass, n_numaux))
 
-                    if n_sclass == 2 or n_sclass == 3: # extern or static
+                    if n_numaux == 0 and (n_sclass == 2 or n_sclass == 3): # extern or static
                         if n_scnum == 0: # undefined section (imported symbol)
                             #sym = Symbol(SymbolType.ImportAddressSymbol, n_value, name)
                             #self.define_auto_symbol(sym)
                             pass
                         elif n_scnum > 0: # regular section
-                            sym = Symbol(SymbolType.FunctionSymbol if sections[n_scnum]['semantics'] & SectionSemantics.ReadOnlyCodeSectionSemantics else SymbolType.DataSymbol, n_value, name)
+                            # find the first matching section for the symbol value
+                            section = self.get_sections_at(n_value)[0]
+
+                            # define a code or data symbol depending on the section
+                            sym = Symbol(
+                                SymbolType.FunctionSymbol if section.semantics & SectionSemantics.ReadOnlyCodeSectionSemantics else SymbolType.DataSymbol, 
+                                n_value, 
+                                name)
 
                             # HACK: try to avoid making functions for local labels
                             if n_sclass == 2 or sym.type == SymbolType.DataSymbol:
@@ -231,3 +234,61 @@ class COFF(BinaryView):
 
     def perform_get_entry_point(self):
         return self.entry
+
+    def load_library_symbols(self, path):
+        log_info('  shared library: {}'.format(path))
+
+        try:
+            # try to load the shared library from the same path as the main file
+            library_filename = os.path.normpath(
+                os.path.join(os.path.dirname(self.file.filename), os.path.basename(path)))
+            log_info('    loading from {}'.format(library_filename))
+            library = open(library_filename, 'rb')
+
+            # file header
+            (f_magic, f_nscns, f_timdat, f_symptr, f_nsyms, f_opthdr, f_flags) = struct.unpack('<2H3L2H', library.read(ElementSize.FILE))
+
+            # symbols
+            if not f_flags & FileHeaderFlags.LSYMS and f_symptr and f_nsyms:
+                # read the string table
+                library.seek(f_symptr + f_nsyms * ElementSize.SYMBOL)
+                stable_size = struct.unpack('<L', library.read(4))[0]
+                library.seek(f_symptr + f_nsyms * ElementSize.SYMBOL)
+                string_table = library.read(stable_size)
+
+                # process the symbol table
+                library.seek(f_symptr)
+                n_numaux = 0
+                for symbol_number in range(f_nsyms):
+
+                    # read a symbol
+                    symbol_data = library.read(ElementSize.SYMBOL)
+
+                    # skip auxiliary entries
+                    if n_numaux:
+                        n_numaux -= 1
+                        continue
+
+                    # unpack symbol fields
+                    (n_name, n_value, n_scnum, n_type, n_sclass, n_numaux) = struct.unpack('<8sLhHbb', symbol_data)
+
+                    # use the name as-is or look it up in the string table
+                    (n_zeros, n_offset) = struct.unpack('<ll', n_name)
+                    name = (string_table[n_offset:] if n_zeros == 0 else n_name).split('\0', 1)[0]
+
+                    # only consider exported extern symbols
+                    if n_sclass == 2 and n_scnum > 0:
+                        section = self.get_sections_at(n_value)[0]
+
+                        sym = Symbol(
+                            SymbolType.ImportedFunctionSymbol if section.semantics & SectionSemantics.ReadOnlyCodeSectionSemantics else SymbolType.ImportedDataSymbol, 
+                            n_value, 
+                            name)
+
+                        self.define_auto_symbol(sym)
+
+            library.close()
+
+        except:
+            log_error('    failed to load symbols from {}'.format(library_filename))
+            log_error(traceback.format_exc())

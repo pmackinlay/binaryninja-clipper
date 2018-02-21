@@ -1,4 +1,4 @@
-# CLIPPER Architecture Plugin (v0.1)
+# CLIPPER Architecture Plugin (v0.2)
 Author: **Patrick Mackinlay**
 
 _A disassembler and lifter for the CLIPPER architecture, and loaders for
@@ -40,7 +40,7 @@ To install this plugin, navigate to your Binary Ninja plugins directory, and run
 
 This plugin requires the following minimum version of Binary Ninja:
 
- * release - 1.1.1057
+ * 1.1.1057
 
 ## License
 

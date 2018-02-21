@@ -954,6 +954,8 @@ class CLIPPER(Architecture):
         'psw': RegisterInfo('psw', 4),
         'ssw': RegisterInfo('ssw', 4)
     }
+    
+    global_regs = ['pc','psw','ssw']
 
     flags = ['n', 'z', 'v', 'c', 'fx', 'fu', 'fd', 'fv', 'fi']
 
@@ -1048,7 +1050,7 @@ class CLIPPER(Architecture):
         result = InstructionInfo()
         result.length = length
 
-        # Add branches
+        # add branches
         if instr in ['ret', 'reti']:
             result.add_branch(BranchType.FunctionReturn)
         elif instr in ['b*', 'db*']:
