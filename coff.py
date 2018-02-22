@@ -206,11 +206,13 @@ class COFF(BinaryView):
                             pass
                         elif n_scnum > 0: # regular section
                             # find the first matching section for the symbol value
-                            section = self.get_sections_at(n_value)[0]
+                            sections = self.get_sections_at(n_value)
+                            if len(sections) == 0:
+                                continue
 
                             # define a code or data symbol depending on the section
                             sym = Symbol(
-                                SymbolType.FunctionSymbol if section.semantics & SectionSemantics.ReadOnlyCodeSectionSemantics else SymbolType.DataSymbol, 
+                                SymbolType.FunctionSymbol if sections[0].semantics & SectionSemantics.ReadOnlyCodeSectionSemantics else SymbolType.DataSymbol, 
                                 n_value, 
                                 name)
 

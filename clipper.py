@@ -360,9 +360,9 @@ def shift_helper(il, r1, r2, positive, negative, long, length):
         il.append(il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], positive(
             8, 
             il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-            il.reg(4, IReg[r1]), '*')))
+            il.reg(4, IReg[r1]), 'vc'), 'nz'))
     else:
-        il.append(il.set_reg(4, IReg[r2], positive(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')))
+        il.append(il.set_reg(4, IReg[r2], positive(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'))
     il.append(il.goto(done))
 
     # right
@@ -371,9 +371,9 @@ def shift_helper(il, r1, r2, positive, negative, long, length):
         il.append(il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], negative(
             8, 
             il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-            il.neg_expr(4, il.reg(4, IReg[r1])), '*')))
+            il.neg_expr(4, il.reg(4, IReg[r1])), 'vc'), 'nz'))
     else:
-        il.append(il.set_reg(4, IReg[r2], negative(4, il.reg(4, IReg[r2]), il.neg_expr(4, il.reg(4, IReg[r1])), '*')))
+        il.append(il.set_reg(4, IReg[r2], negative(4, il.reg(4, IReg[r2]), il.neg_expr(4, il.reg(4, IReg[r1])), 'vc'), 'nz'))
     il.append(il.goto(done))
 
     if not done_found:
@@ -504,7 +504,7 @@ def cmpc_helper(il, length):
 
     # if *r2 != *r1 goto done
     il.mark_label(loop)
-    il.append(il.sub(1, il.load(1, il.reg(4, IReg[2])), il.load(1, il.reg(4, IReg[1])), '*'))
+    il.append(il.sub(4, il.sign_extend(4, il.load(1, il.reg(4, IReg[2]))), il.sign_extend(4, il.load(1, il.reg(4, IReg[1]))), '*'))
     il.append(il.if_expr(il.flag_condition(LowLevelILFlagCondition.LLFC_NE), done, match))
 
     # else r1++, r2++, r0--
@@ -550,12 +550,20 @@ InstructionIL = {
         # https://github.com/Vector35/binaryninja-api/issues/507
         il.system_call(),
     'ret': lambda il, r1, r2, rx, constant, mode, length:
-        # TODO: non-standard stack pointer
-        il.ret(il.pop(4)) if r2 == 15 else il.unimplemented(),
+        il.ret(il.pop(4)) if r2 == 15 else [
+            il.ret(il.load(4, il.reg(4, IReg[r2]))),
+            il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, 4)))
+        ],
     'pushw': lambda il, r1, r2, rx, constant, mode, length:
-        il.push(4, il.reg(4, IReg[r2])) if r1 == 15 else il.unimplemented(),
+        il.push(4, il.reg(4, IReg[r2])) if r1 == 15 else [
+            il.store(4, il.sub(4, il.reg(4, IReg[r1]), il.const(4, 4)), il.reg(4, IReg[r2])),
+            il.set_reg(4, IReg[r1], il.sub(4, il.reg(4, IReg[r1]), il.const(4, 4)))            
+        ],
     'popw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.pop(4)) if r1 == 15 else il.unimplemented(),
+        il.set_reg(4, IReg[r2], il.pop(4)) if r1 == 15 else [
+            il.set_reg(4, IReg[r2], il.load(4, il.reg(4, IReg[r1]))),
+            il.set_reg(4, IReg[r1], il.add(4, il.reg(4, IReg[r1]), il.const(4, 4))) if not r1 == r2 else None
+        ],
 
     # fp operations
     'adds': lambda il, r1, r2, rx, constant, mode, length:
@@ -605,46 +613,46 @@ InstructionIL = {
         shift_helper(il, r1, r2, il.rotate_left, il.rotate_right, True, length),
     'shai': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], 
-            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), '*') if constant > 0 else
-            il.arith_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), '*')),
+            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc') if constant > 0 else
+            il.arith_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), 'vc'), 'nz'),
     'shali': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.shift_left(
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-                il.const(4, constant), '*') if constant > 0 else
+                il.const(4, constant), 'vc') if constant > 0 else
             il.arith_shift_right(
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-                il.const(4, -constant), '*')),
+                il.const(4, -constant), 'vc'), 'nz'),
     'shli': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2],
-            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), '*') if constant > 0 else
-            il.logical_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), '*')),
+            il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc') if constant > 0 else
+            il.logical_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), 'vc'), 'nz'),
     'shlli': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.shift_left(
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-                il.const(4, constant), '*') if constant > 0 else
+                il.const(4, constant), 'vc') if constant > 0 else
             il.logical_shift_right(
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-                il.const(4, -constant), '*')),
+                il.const(4, -constant), 'vc'), 'nz'),
     'roti': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], 
-            il.rotate_left(4, il.reg(4, IReg[r2]), il.const(4, constant), '*') if constant > 0 else
-            il.rotate_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), '*')),
+            il.rotate_left(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc') if constant > 0 else
+            il.rotate_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), 'vc'), 'nz'),
     'rotli': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.rotate_left(
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-                il.const(4, constant), '*') if constant > 0 else
+                il.const(4, constant), 'vc') if constant > 0 else
             il.rotate_right(
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
-                il.const(4, -constant), '*')),
+                il.const(4, -constant), 'vc'), 'nz'),
     
     'call': lambda il, r1, r2, rx, constant, mode, length:
         # TODO: non-standard stack pointer
@@ -687,13 +695,11 @@ InstructionIL = {
         il.store(2, address_operand(il, r1, rx, constant, mode), il.reg(2, IReg[r2])),
         
     'addw': lambda il, r1, r2, rx, constant, mode, length:
-        # hack to use left shift when r1==r2 (preserves BN branch table detection)
-        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')) if r1 != r2 else
-        il.set_reg(4, IReg[r2], il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, 1), '*')),
+        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'),
     'addq': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, r1), '*')),
+        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, r1), 'vc'), 'nz'),
     'addi': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
+        il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc'), 'nz'),
     'movw': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, IReg[r1]), '*'),
     'loadq': lambda il, r1, r2, rx, constant, mode, length:
@@ -701,20 +707,20 @@ InstructionIL = {
     'loadi': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, constant), '*'),
     'andw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
+        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
     'andi': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
+        il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
     'orw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
+        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
     'ori': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
+        il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
 
     'addwc': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.add_carry(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), '*')),
+        il.set_reg(4, IReg[r2], il.add_carry(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), 'vc'), 'nz'),
     'subwc': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub_borrow(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), '*')),
+        il.set_reg(4, IReg[r2], il.sub_borrow(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), 'vc'), 'nz'),
     'negw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.neg_expr(4, il.reg(4, IReg[r1]), '*')),
+        il.set_reg(4, IReg[r2], il.neg_expr(4, il.reg(4, IReg[r1]), 'vc'), 'nz'),
     'mulw': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
     'mulwx': lambda il, r1, r2, rx, constant, mode, length:
@@ -733,11 +739,11 @@ InstructionIL = {
         il.set_reg(4, IReg[r2], il.mod_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
         
     'subw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
+        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'),
     'subq': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, r1), '*')),
+        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, r1), 'vc'), 'nz'),
     'subi': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
+        il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc'), 'nz'),
     'cmpw': lambda il, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*'),
     'cmpq': lambda il, r1, r2, rx, constant, mode, length:
@@ -745,11 +751,11 @@ InstructionIL = {
     'cmpi': lambda il, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), '*'),
     'xorw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
+        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'),
     'xori': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), '*')),
+        il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc'), 'nz'),
     'notw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.not_expr(4, il.reg(4, IReg[r1]), '*')),
+        il.set_reg(4, IReg[r2], il.not_expr(4, il.reg(4, IReg[r1]), 'vc'), 'nz'),
     'notq': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, ~r1), '*'),
 
@@ -899,12 +905,16 @@ InstructionIL = {
     'restur': lambda il, r1, r2, rx, constant, mode, length:
         il.nop(),
     'reti': lambda il, r1, r2, rx, constant, mode, length:
-        # TODO: non-standard stack pointer
         [
             il.set_reg(4, SReg[0], il.pop(4)),
             il.set_reg(4, SReg[1], il.pop(4)),
             il.ret(il.pop(4))
-        ] if r1 == 15 else il.unimplemented(),
+        ] if r1 == 15 else [
+            il.set_reg(4, SReg[0], il.load(4, il.reg(4, IReg[r1]))),
+            il.set_reg(4, SReg[1], il.load(4, il.add(4, il.reg(4, IReg[r1]), il.const(4, 4)))),
+            il.ret(4, il.load(4, il.add(4, il.reg(4, IReg[r1]), il.const(4, 8)))),
+            il.set_reg(4, IReg[r1], il.add(4, il.reg(4, IReg[r1]), il.const(4, 12)))
+        ],
 
     'wait': lambda il, r1, r2, rx, constant, mode, length:
         il.nop(),
@@ -961,10 +971,12 @@ class CLIPPER(Architecture):
 
     # The first flag write type is ignored currently.
     # See: https://github.com/Vector35/binaryninja-api/issues/513
-    flag_write_types = ['', '*', 'n', 'f*', 'fx', 'fi','fxi','fxuvi']
+    flag_write_types = ['', '*', 'nz', 'vc', 'n', 'f*', 'fx', 'fi','fxi','fxuvi']
 
     flags_written_by_flag_write_type = {
         '*': ['n', 'z', 'v', 'c'],
+        'nz': ['n', 'z'],
+        'vc': ['v', 'c'],
         'n': ['n'],
         'f*': ['fx', 'fu', 'fd', 'fv', 'fi'],
         'fx': ['fx'],
@@ -1164,3 +1176,13 @@ class CLIPPER(Architecture):
                 il.append(il_instr)
 
         return length
+
+    # def perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il):
+    #     # loadi, loadq: vc=0
+    #     if flag == 'v' or flag == 'c':
+    #         if op == LowLevelILOperation.LLIL_SET_REG or op == LowLevelILOperation.LLIL_FSUB:
+    #             return il.set_flag(flag, il.const(0, 0))
+    #         else:
+    # 		    return self.get_default_flag_write_low_level_il(op, size, self._flag_roles[flag], operands, il)
+    #
+    #     return Architecture.perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il)
