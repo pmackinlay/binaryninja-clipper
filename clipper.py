@@ -121,7 +121,7 @@ def address(parcel0, data):
         elif parcel0 & 0xf0 == AddressMode.RELX:
             # relative indexed
             parcel1 = struct.unpack('<h', data[2:4])[0]
-            return 4, (parcel0 & 0xf0) >> 4, parcel1 & 0xf, (parcel1 & 0xf0) >> 4, None, AddressMode.RELX
+            return 4, parcel0 & 0xf, parcel1 & 0xf, (parcel1 & 0xf0) >> 4, None, AddressMode.RELX
         else:
             return None, None, None, None, None, None
     else:
