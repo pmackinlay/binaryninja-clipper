@@ -2,7 +2,7 @@ import struct
 import enum
 
 from binaryninja.architecture import Architecture
-from binaryninja.lowlevelil import LowLevelILLabel
+from binaryninja.lowlevelil import LowLevelILLabel, ILRegister
 from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken
 from binaryninja.log import log_error
 from binaryninja.enums import (BranchType, InstructionTextTokenType, LowLevelILOperation, LowLevelILFlagCondition, FlagRole)
@@ -1190,6 +1190,9 @@ class CLIPPER(Architecture):
                 return il.const(0, 0)
         elif flag == 'n' and op == LowLevelILOperation.LLIL_FSUB:
             # compute the negative flag for floating point comparison
-            return il.float_compare_greater_equal(size, il.reg(size, operands[1]), il.reg(size, operands[0]))
+            return il.float_compare_greater_equal(
+                size,
+                il.reg(size, operands[1]) if isinstance(operands[1], ILRegister) else il.const(size, operands[1]),
+                il.reg(size, operands[0]) if isinstance(operands[0], ILRegister) else il.const(size, operands[0]))
  
         return Architecture.perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il)
