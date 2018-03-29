@@ -1,4 +1,4 @@
-# CLIPPER Architecture Plugin (v0.3)
+# CLIPPER Architecture Plugin (v0.4)
 Author: **Patrick Mackinlay**
 
 _A disassembler and lifter for the CLIPPER architecture, and loaders for
@@ -12,14 +12,12 @@ The plugin also contains three binary views, the [first](rom.py) of which is abl
 to load InterPro computer system boot and flash ROM images. The [second](coff.py) is
 designed to handle COFF executable and object files as used by CLIX (UNIX SYSVR3
 for CLIPPER systems). The [third](disk.py) binary view handles disk partition
-images, specifically the REBUILD boot floppy disk image (and the I/O system monitor
-and blue screen utility code contained).
+images, specifically the REBUILD and FDMDISK boot floppy disk images (and the I/O
+system monitor, blue screen utility and diagnostic code contained).
 
 The CLIPPER architecture plugin has the following known issues:
 
 * Stack operations using registers other than r15 are not implemented.
-* Incomplete handling of condition codes/flags.
-* System calls are not fully implemented.
 * Some C400 instructions are unimplemented, especially delayed branches.
 
 The COFF binary view has the following known issues:
@@ -42,7 +40,7 @@ To install this plugin, navigate to your Binary Ninja plugins directory, and run
 
 This plugin requires the following minimum version of Binary Ninja:
 
- * 1.1.1073
+ * 1.1.1150
 
 ## License
 

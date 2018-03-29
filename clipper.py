@@ -5,7 +5,6 @@ from binaryninja.architecture import Architecture
 from binaryninja.lowlevelil import LowLevelILLabel
 from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken
 from binaryninja.log import log_error
-from binaryninja.callingconvention import CallingConvention
 from binaryninja.enums import (BranchType, InstructionTextTokenType, LowLevelILOperation, LowLevelILFlagCondition, FlagRole)
 
 class OperandType(enum.IntEnum):
@@ -548,7 +547,10 @@ InstructionIL = {
     'calls': lambda il, r1, r2, rx, constant, mode, length:
         # Should pass system call number (constant & 0x7f).
         # https://github.com/Vector35/binaryninja-api/issues/507
-        il.system_call(),
+        [ 
+            il.set_reg(1, '_sc', il.const(1, constant & 0x7f)),
+            il.system_call()
+        ],
     'ret': lambda il, r1, r2, rx, constant, mode, length:
         il.ret(il.pop(4)) if r2 == 15 else [
             il.ret(il.load(4, il.reg(4, IReg[r2]))),
@@ -962,7 +964,10 @@ class CLIPPER(Architecture):
 
         'pc': RegisterInfo('pc', 4),
         'psw': RegisterInfo('psw', 4),
-        'ssw': RegisterInfo('ssw', 4)
+        'ssw': RegisterInfo('ssw', 4),
+
+        # fake _sc register holds the system call number
+        '_sc': RegisterInfo('_sc', 1)
     }
     
     global_regs = ['pc','psw','ssw']
@@ -1053,7 +1058,7 @@ class CLIPPER(Architecture):
 
         return instr[0], r1, r2, rx, constant, mode, instr[2], length, address
 
-    def perform_get_instruction_info(self, data, addr):
+    def get_instruction_info(self, data, addr):
         (instr, _, r2, _, constant, _, _, length, address) = self.decode_instruction(data, addr)
 
         if instr is None:
@@ -1081,7 +1086,7 @@ class CLIPPER(Architecture):
 
         return result
 
-    def perform_get_instruction_text(self, data, addr):
+    def get_instruction_text(self, data, addr):
         (instr, r1, r2, rx, constant, mode, operand_list, length, _) = self.decode_instruction(data, addr)
 
         if instr is None:
@@ -1133,7 +1138,8 @@ class CLIPPER(Architecture):
                     tokens += [InstructionTextToken(InstructionTextTokenType.PossibleAddressToken, hex(constant), constant)]
                 elif mode == AddressMode.REL32 or mode == AddressMode.REL12:
                     tokens += [
-                        InstructionTextToken(InstructionTextTokenType.PossibleAddressToken, hex(constant), constant),
+                        # stack-relative offsets are usually not addresses
+                        InstructionTextToken(InstructionTextTokenType.PossibleAddressToken if r1 != 15 else InstructionTextTokenType.IntegerToken, hex(constant), constant),
                         InstructionTextToken(InstructionTextTokenType.TextToken, '('),
                         InstructionTextToken(InstructionTextTokenType.RegisterToken, IReg[r1]),
                         InstructionTextToken(InstructionTextTokenType.TextToken, ')')]
@@ -1158,7 +1164,7 @@ class CLIPPER(Architecture):
 
         return tokens, length
 
-    def perform_get_instruction_low_level_il(self, data, addr, il):
+    def get_instruction_low_level_il(self, data, addr, il):
         (instr, r1, r2, rx, constant, mode, _, length, _) = self.decode_instruction(data, addr)
 
         if instr is None:
@@ -1177,12 +1183,9 @@ class CLIPPER(Architecture):
 
         return length
 
-    # def perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il):
-    #     # loadi, loadq: vc=0
-    #     if flag == 'v' or flag == 'c':
-    #         if op == LowLevelILOperation.LLIL_SET_REG or op == LowLevelILOperation.LLIL_FSUB:
-    #             return il.set_flag(flag, il.const(0, 0))
-    #         else:
-    # 		    return self.get_default_flag_write_low_level_il(op, size, self._flag_roles[flag], operands, il)
-    #
-    #     return Architecture.perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il)
+    def get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il):
+        if flag == 'v' or flag == 'c':
+            if op == LowLevelILOperation.LLIL_SET_REG or op == LowLevelILOperation.LLIL_FSUB:
+                return il.const(0, 0)
+ 
+        return Architecture.perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il)

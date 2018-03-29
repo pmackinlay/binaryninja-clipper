@@ -57,9 +57,7 @@ class COFF(BinaryView):
     def __init__(self, data):
         BinaryView.__init__(self, parent_view = data, file_metadata = data.file)
 
-        # FIXME: are both of these required?
-        self.platform =  Architecture['clipper'].standalone_platform 
-        self.plat = Architecture['clipper'].standalone_platform
+        self.platform = Architecture['clipper'].standalone_platform
 
     @classmethod
     def is_valid_for_data(self, data):
@@ -117,7 +115,7 @@ class COFF(BinaryView):
                 # .bss
                 if s_flags & SectionType.BSS:
                     map_section = True
-                    segment_flags |= SegmentFlag.SegmentWritable
+                    segment_flags |= SegmentFlag.SegmentWritable | SegmentFlag.SegmentContainsData
                     section_flags |= SectionSemantics.ReadWriteDataSectionSemantics
 
                 # .comment
@@ -133,16 +131,16 @@ class COFF(BinaryView):
                     section_flags = SectionSemantics.ReadOnlyDataSectionSemantics
 
                     offset = s_scnptr
-                    for library in range(s_paddr):
+                    for library_number in range(s_paddr):
                         (entsize, entoff) = struct.unpack('<LL', self.parent_view.read(offset, 8))
                         lib_path = self.parent_view.read(offset + 8 + (entoff - 2) * 4, (entsize - entoff) * 4)
                         offset += entsize * 4
 
                         self.load_library_symbols(lib_path.split('\0', 1)[0])
 
-                # load segments which have a virtual address, a section pointer and are not marked noload
-                if map_section and s_scnptr and not s_flags & SectionType.NOLOAD:
-                    self.add_auto_segment(s_vaddr, s_size, s_scnptr, s_size, segment_flags)
+                # load segments which have a virtual address and are not marked noload
+                if map_section and not s_flags & SectionType.NOLOAD:
+                    self.add_auto_segment(s_vaddr, s_size, s_scnptr, s_size if s_scnptr else 0, segment_flags)
 
                 # load segments which exist in the file to the parent view
                 if s_scnptr:
@@ -217,10 +215,10 @@ class COFF(BinaryView):
                                 name)
 
                             # HACK: try to avoid making functions for local labels
-                            if n_sclass == 2 or sym.type == SymbolType.DataSymbol:
-                                self.define_auto_symbol_and_var_or_function(sym, None)
-                            else:
-                                self.define_auto_symbol(sym)
+                            #if n_sclass == 2 or sym.type == SymbolType.DataSymbol:
+                            #    self.define_auto_symbol_and_var_or_function(sym, None)
+                            #else:
+                            self.define_auto_symbol(sym)
 
             return True
 
