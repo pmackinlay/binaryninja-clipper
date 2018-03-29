@@ -1,7 +1,6 @@
 import struct
 import traceback
 
-from binaryninja.architecture import Architecture
 from binaryninja.platform import Platform
 from binaryninja.binaryview import BinaryView
 from binaryninja.types import Symbol
@@ -58,8 +57,6 @@ class BootFloppy(BinaryView):
                         self.add_entry_point(b_entry)
 
                     elif mod == 2: # blue screen utility
-                        self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, b_loadsize, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
-
                         # hard-coded lookup to find copied code block offset based on partition checksum
                         copy_lookup = {
                             0xe5c5:0x48d98, # C400
@@ -69,22 +66,22 @@ class BootFloppy(BinaryView):
                         copy_size = b_loadsize - copy_offset
                         copy_address = 0x280000
 
-                        # copy loaded text
-                        self.add_auto_segment(copy_address, copy_size, (start_block + 1) * 512 + copy_offset, copy_size, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
-                        self.add_auto_section('par8.2.text', copy_address, copy_size)
+                        self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, copy_offset, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
+                        self.add_auto_section('par{:x}.{:x}.boot'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
 
-                        # unmap the copied data from the loaded segment
+                        # copy loaded text
+                        self.add_auto_segment(copy_address, copy_size, (start_block + 1) * 512 + copy_offset, copy_size, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable | SegmentFlag.SegmentExecutable)
+                        self.add_auto_section('par{:x}.{:x}.text'.format(par, mod), copy_address, copy_size, SectionSemantics.ReadOnlyCodeSectionSemantics)
+
                         # FIXME: for CLIPPER, the erased size should be copy_size + 0x69b00, unknown why
-                        self.add_auto_segment(copy_offset, copy_size, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('par8.2.clr', copy_offset, copy_size, SectionSemantics.ReadWriteDataSectionSemantics)
 
                         # create an unitialised data section directly after the copied data
-                        self.add_auto_segment(copy_address + copy_offset, 0x714500, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('par8.2.bss', copy_address + copy_offset, 0x71450, SectionSemantics.ReadWriteDataSectionSemantics)
+                        self.add_auto_segment(copy_address + copy_size, 0x71450, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
+                        self.add_auto_section('par{:x}.{:x}.bss'.format(par, mod), copy_address + copy_size, 0x71450, SectionSemantics.ReadWriteDataSectionSemantics)
 
                         # the first 8 pages contain vectors and hard-coded page mappings
                         #self.add_auto_segment(0, 0x8000, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('vectors', 0x0, 0x8000, SectionSemantics.ReadWriteDataSectionSemantics)
+                        #self.add_auto_section('vectors', 0x0, 0x8000, SectionSemantics.ReadWriteDataSectionSemantics)
 
                         self.add_entry_point(0x8000)
 

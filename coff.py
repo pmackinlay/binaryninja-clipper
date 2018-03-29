@@ -4,7 +4,6 @@ import enum
 import types
 import os.path
 
-from binaryninja.architecture import Architecture
 from binaryninja.platform import Platform
 from binaryninja.binaryview import BinaryView
 from binaryninja.types import Symbol
