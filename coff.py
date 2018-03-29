@@ -5,6 +5,7 @@ import types
 import os.path
 
 from binaryninja.architecture import Architecture
+from binaryninja.platform import Platform
 from binaryninja.binaryview import BinaryView
 from binaryninja.types import Symbol
 from binaryninja.log import log_error, log_info
@@ -57,8 +58,6 @@ class COFF(BinaryView):
     def __init__(self, data):
         BinaryView.__init__(self, parent_view = data, file_metadata = data.file)
 
-        self.platform = Architecture['clipper'].standalone_platform
-
     @classmethod
     def is_valid_for_data(self, data):
         header = data.read(0,20)
@@ -72,6 +71,8 @@ class COFF(BinaryView):
         return False
 
     def init(self):
+        self.platform = Platform['clix-clipper']
+
         try:
             # file header
             (f_magic, f_nscns, f_timdat, f_symptr, f_nsyms, f_opthdr, self.f_flags) = struct.unpack('<2H3L2H', self.parent_view.read(0, ElementSize.FILE))

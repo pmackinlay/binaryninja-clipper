@@ -1,5 +1,6 @@
 
 from binaryninja.architecture import Architecture
+from binaryninja.platform import Platform
 from binaryninja.callingconvention import CallingConvention
 
 from clipper import CLIPPER
@@ -25,7 +26,23 @@ arch = Architecture['clipper']
 arch.register_calling_convention(DefaultCallingConvention(arch, 'default'))
 arch.register_calling_convention(SystemCallingConvention(arch, 'syscall'))
 
-platform = arch.standalone_platform
-platform.default_calling_convention = arch.calling_conventions['default']
-platform.system_call_convention = arch.calling_conventions['syscall']
-platform.register('clix')
+standalone = arch.standalone_platform
+standalone.default_calling_convention = arch.calling_conventions['default']
+
+# this platform represents the base InterPro hardware, used by the boot
+# ROMs, diagnostic tools and CLIX kernel
+class InterProPlatform(Platform):
+    name = 'interpro-clipper'
+
+interpro = InterProPlatform(arch)
+interpro.default_calling_convention = arch.calling_conventions['default']
+interpro.register('interpro')
+
+# this platform represents CLIX user-mode, used by the COFF binary view
+class CLIXPlatform(Platform):
+    name = 'clix-clipper'
+
+clix = CLIXPlatform(arch)
+clix.default_calling_convention = arch.calling_conventions['default']
+clix.system_call_convention = arch.calling_conventions['syscall']
+clix.register('clix')

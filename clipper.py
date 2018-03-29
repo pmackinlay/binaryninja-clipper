@@ -1185,7 +1185,11 @@ class CLIPPER(Architecture):
 
     def get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il):
         if flag == 'v' or flag == 'c':
+            # clear overflow and carry flags for instructions which affect but don't compute them
             if op == LowLevelILOperation.LLIL_SET_REG or op == LowLevelILOperation.LLIL_FSUB:
                 return il.const(0, 0)
+        elif flag == 'n' and op == LowLevelILOperation.LLIL_FSUB:
+            # compute the negative flag for floating point comparison
+            return il.float_compare_greater_equal(size, il.reg(size, operands[1]), il.reg(size, operands[0]))
  
         return Architecture.perform_get_flag_write_low_level_il(self, op, size, write_type, flag, operands, il)

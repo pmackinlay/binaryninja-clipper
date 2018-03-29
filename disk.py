@@ -2,6 +2,7 @@ import struct
 import traceback
 
 from binaryninja.architecture import Architecture
+from binaryninja.platform import Platform
 from binaryninja.binaryview import BinaryView
 from binaryninja.types import Symbol
 from binaryninja.log import log_error, log_info
@@ -18,9 +19,6 @@ class BootFloppy(BinaryView):
     def __init__(self, data):
         BinaryView.__init__(self, parent_view = data, file_metadata = data.file)
 
-        self.platform = Architecture['clipper'].standalone_platform
-        self.unpacked = []
-
     @classmethod
     def is_valid_for_data(self, data):
         hdr = data.read(0, 4)
@@ -33,6 +31,9 @@ class BootFloppy(BinaryView):
         return False
 
     def init(self):
+        self.platform = Platform['interpro-clipper']
+        self.unpacked = []
+
         try:
             # read floppy partition header: floppypar(4)
             (magic, partition_count) = struct.unpack('<4sH', self.parent_view.read(0, 6))
@@ -82,7 +83,7 @@ class BootFloppy(BinaryView):
                         self.add_auto_section('par8.2.bss', copy_address + copy_offset, 0x71450, SectionSemantics.ReadWriteDataSectionSemantics)
 
                         # the first 8 pages contain vectors and hard-coded page mappings
-                        self.add_auto_segment(0, 0x8000, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
+                        #self.add_auto_segment(0, 0x8000, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
                         self.add_auto_section('vectors', 0x0, 0x8000, SectionSemantics.ReadWriteDataSectionSemantics)
 
                         self.add_entry_point(0x8000)

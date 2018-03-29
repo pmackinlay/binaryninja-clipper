@@ -2,6 +2,7 @@ import struct
 import traceback
 
 from binaryninja.architecture import Architecture
+from binaryninja.platform import Platform
 from binaryninja.binaryview import BinaryView
 from binaryninja.log import log_error
 from binaryninja.enums import (SegmentFlag, SymbolType, SectionSemantics)
@@ -12,8 +13,6 @@ class ROM(BinaryView):
 
     def __init__(self, data):
         BinaryView.__init__(self, parent_view = data, file_metadata = data.file)
-
-        self.platform = Architecture['clipper'].standalone_platform
 
     @classmethod
     def is_valid_for_data(self, data):
@@ -39,6 +38,8 @@ class ROM(BinaryView):
         return False
 
     def init(self):
+        self.platform = Platform['interpro-clipper']
+
         try:
             self.add_auto_segment(self.rom_start, self.rom_size, 0, self.rom_size, SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
             self.add_entry_point(self.rom_start)
