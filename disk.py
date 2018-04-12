@@ -7,9 +7,15 @@ from binaryninja.types import Symbol
 from binaryninja.log import log_error, log_info
 from binaryninja.enums import (SegmentFlag, SymbolType, SectionSemantics)
 
+from unpack import unpack
+
 # CLIPPER executables loaded from disk images. Currently only supports the
 # Sapphire rebuild boot floppy (I/O system monitor and blue screen utilities)
 # but should be extended to support others such as FDMDISK, etc.
+
+# TODO:
+#   - inject unpacked data into parent view
+#   - refactor and complete hardware symbols
 
 class BootFloppy(BinaryView):
     name = 'InterPro Bootable Floppy'
@@ -51,9 +57,9 @@ class BootFloppy(BinaryView):
                 if par == 8 and b_processor == 1:
                     if mod == 0: # i/o system monitor
                         self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, b_loadsize, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
-                        self.add_auto_section('par{:x}.{:x}.text'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.text'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
                         self.add_auto_segment(b_uinitaddr, b_uinitaddr, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('par{:x}.{:x}.bss'.format(par, mod), b_uinitaddr, b_uinitsize, SectionSemantics.ReadWriteDataSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.bss'.format(par, mod), b_uinitaddr, b_uinitsize, SectionSemantics.ReadWriteDataSectionSemantics)
                         self.add_entry_point(b_entry)
 
                     elif mod == 2: # blue screen utility
@@ -67,17 +73,17 @@ class BootFloppy(BinaryView):
                         copy_address = 0x280000
 
                         self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, copy_offset, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
-                        self.add_auto_section('par{:x}.{:x}.boot'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.boot'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
 
                         # copy loaded text
                         self.add_auto_segment(copy_address, copy_size, (start_block + 1) * 512 + copy_offset, copy_size, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable | SegmentFlag.SegmentExecutable)
-                        self.add_auto_section('par{:x}.{:x}.text'.format(par, mod), copy_address, copy_size, SectionSemantics.ReadOnlyCodeSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.text'.format(par, mod), copy_address, copy_size, SectionSemantics.ReadOnlyCodeSectionSemantics)
 
                         # FIXME: for CLIPPER, the erased size should be copy_size + 0x69b00, unknown why
 
                         # create an unitialised data section directly after the copied data
                         self.add_auto_segment(copy_address + copy_size, 0x71450, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('par{:x}.{:x}.bss'.format(par, mod), copy_address + copy_size, 0x71450, SectionSemantics.ReadWriteDataSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.bss'.format(par, mod), copy_address + copy_size, 0x71450, SectionSemantics.ReadWriteDataSectionSemantics)
 
                         # the first 8 pages contain vectors and hard-coded page mappings
                         #self.add_auto_segment(0, 0x8000, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
@@ -85,15 +91,32 @@ class BootFloppy(BinaryView):
 
                         self.add_entry_point(0x8000)
 
-                elif False: #par == 0xa: # diagnostics
+                elif par == 0xa:
+                    # Diagnostic disk partition allocation is as follows:
+                    #
+                    #   mod   content
+                    #     0   FDMDISK
+                    #     2   Video
+                    #     3   Digitizer
+                    #     4   Token Ring
+                    #     5   Hard PC
+                    #    11   CLIPPER
+                    #    12   Clock/Calendar
+                    #    13   Ethernet
+                    #    15   I/O Gate Array
+                    #    16   Memory
+                    #    17   Plotter
+                    #    18   SCSI
+                    #    19   Serial
+
                     if b_uinitsize > 0: # unpacked fdmdisk module
                         self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, b_loadsize, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
-                        self.add_auto_section('par{:x}.{:x}.text'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.text'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
                         self.add_auto_segment(b_uinitaddr, b_uinitsize, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('par{:x}.{:x}.bss'.format(par, mod), b_uinitaddr, b_uinitsize, SectionSemantics.ReadWriteDataSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.bss'.format(par, mod), b_uinitaddr, b_uinitsize, SectionSemantics.ReadWriteDataSectionSemantics)
                         self.add_entry_point(b_entry)
 
-                    elif mod not in [4,5]: # packed fdmdisk module
+                    elif mod not in [3,4,5]: # packed fdmdisk module (3, 4, and 5 use the same address range, so can't be loaded together)
                         # temporarily map the boot segment
                         self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, b_loadsize, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable)
 
@@ -106,7 +129,7 @@ class BootFloppy(BinaryView):
                         sections = []
                         while packed_size > 0:
                             # unpack a block of packed data
-                            unpacked_data = self.unpack(self.read(packed_addr + 8, packed_size))
+                            unpacked_data = unpack(self.read(packed_addr + 8, packed_size))
 
                             log_info('  unpacked data addr 0x{:x} size 0x{:x}'.format(unpacked_addr, len(unpacked_data)))
 
@@ -126,13 +149,13 @@ class BootFloppy(BinaryView):
                         # create sections
                         self.unpacked += sections
                         for unpacked in sections:
-                            self.add_auto_section('par{:x}.{:x}.text'.format(par, mod), unpacked[0], len(unpacked[1]), SectionSemantics.ReadOnlyCodeSectionSemantics)
+                            self.add_auto_section('{:x}.{:x}.text'.format(par, mod), unpacked[0], len(unpacked[1]), SectionSemantics.ReadOnlyCodeSectionSemantics)
                             
                         # unmap the boot segment
                         self.remove_auto_segment(b_loadaddr, b_loadsize)
 
                         self.add_auto_segment(unpacked_bss_addr, unpacked_bss_size, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
-                        self.add_auto_section('par{:x}.{:x}.bss'.format(par, mod), unpacked_bss_addr, unpacked_bss_size, SectionSemantics.ReadWriteDataSectionSemantics)
+                        self.add_auto_section('{:x}.{:x}.bss'.format(par, mod), unpacked_bss_addr, unpacked_bss_size, SectionSemantics.ReadWriteDataSectionSemantics)
                         self.add_entry_point(unpacked_entry)
 
             # test symbol creation
@@ -190,53 +213,3 @@ class BootFloppy(BinaryView):
             return unpacked_range[0][1][start_offset:end_offset]
         else:
             return ''
-
-    def unpack(self, input_data):
-        input_index = 0
-        output_data = ''
-
-        # initialise the ring buffer
-        ring_buffer = [' ' if x < 0xfee else '\0' for x in range(4096)]
-        ring_index = 0xfee
-
-        control_byte = 0
-        while input_index < len(input_data):
-            control_byte = control_byte >> 1
-
-            if control_byte & 0x100 == 0:
-                control_byte = ord(input_data[input_index]) | 0xff00
-                input_index += 1
-
-            if control_byte & 0x1:
-                # output byte unchanged
-                byte = input_data[input_index]
-                input_index += 1
-
-                output_data += byte
-
-                ring_buffer[ring_index] = byte
-                ring_index = (ring_index + 1) & 0xfff
-            else:
-                # get two input bytes
-                byte1 = ord(input_data[input_index])
-                input_index += 1
-                byte2 = ord(input_data[input_index])
-                input_index += 1
-
-                # 'x' bits become index into ring buffer
-                # 'y' bits set length of output sequence (+3)
-                #
-                # xxxx xxxx xxxx yyyy
-
-                index = (byte1) | ((byte2 & 0xf0) << 4)
-                count = (byte2 & 0xf) + 3
-
-                for i in range(count):
-                    ring_byte = ring_buffer[(index + i) & 0xfff]
-
-                    output_data += ring_byte
-
-                    ring_buffer[ring_index] = ring_byte
-                    ring_index = (ring_index + 1) & 0xfff
-
-        return output_data
