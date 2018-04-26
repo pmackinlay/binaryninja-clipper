@@ -176,15 +176,15 @@ Instructions = {
 
     # The following instructions all require two branch delay slots.
     # See: https://github.com/Vector35/binaryninja-api/issues/866
-	#0x4a:['cdb', address],
-	#0x4b:['cdb', address],
-	#0x4c:['cdbeq', address],
-	#0x4d:['cdbeq', address],
-	#0x4e:['cdbne', address],
-	#0x4f:['cdbne', address],
+    # 0x4a:['cdb', address],
+    # 0x4b:['cdb', address],
+    # 0x4c:['cdbeq', address, [OperandType.R2, OperandType.ADDR]],
+    # 0x4d:['cdbeq', address, [OperandType.R2, OperandType.ADDR]],
+    # 0x4e:['cdbne', address, [OperandType.R2, OperandType.ADDR]],
+    # 0x4f:['cdbne', address, [OperandType.R2, OperandType.ADDR]], #59e726
 
-    #0x50:['db*', address, [OperandType.ADDR]],
-    #0x51:['db*', address, [OperandType.ADDR]],
+    # 0x50:['db*', address, [OperandType.ADDR]],
+    # 0x51:['db*', address, [OperandType.ADDR]],
 
     0x60:['loadw', address, [OperandType.ADDR, OperandType.R2]],
 	0x61:['loadw', address, [OperandType.ADDR, OperandType.R2]],
@@ -345,7 +345,7 @@ def shift_helper(il, r1, r2, positive, negative, long, length):
     right = LowLevelILLabel()
 
     done_found = True
-    done = il.get_label_for_address(Architecture['clipper'], il.current_address + length)
+    done = il.get_label_for_address(il.arch, il.current_address + length)
     if done is None:
         done = LowLevelILLabel()
         done_found = False
@@ -386,7 +386,7 @@ def branch_helper(il, cond, dest, length):
     # try to find a label for the branch target
     taken = None
     if il[dest].operation == LowLevelILOperation.LLIL_CONST:
-        taken = il.get_label_for_address(Architecture['clipper'], il[dest].constant)
+        taken = il.get_label_for_address(il.arch, il[dest].constant)
 
     if cond != 0:
 
@@ -398,7 +398,7 @@ def branch_helper(il, cond, dest, length):
 
         # create untaken target
         untaken_found = True
-        untaken = il.get_label_for_address(Architecture['clipper'], il.current_address + length)
+        untaken = il.get_label_for_address(il.arch, il.current_address + length)
         if untaken is None:
             untaken = LowLevelILLabel()
             untaken_found = False
@@ -421,6 +421,44 @@ def branch_helper(il, cond, dest, length):
         else:
             il.append(il.jump(dest))
 
+# def cdb_helper(il, cond, r2, dest, length):
+#     """
+#     Generate LLIL for compare and delayed branch instructions.
+#     """
+
+#     # try to find a label for the branch target
+#     taken = None
+#     if il[dest].operation == LowLevelILOperation.LLIL_CONST:
+#         taken = il.get_label_for_address(il.arch, il[dest].constant)
+
+#     # create taken target
+#     taken_found = True
+#     if taken is None:
+#         taken = LowLevelILLabel()
+#         taken_found = False
+
+#     # create untaken target
+#     untaken_found = True
+#     untaken = il.get_label_for_address(il.arch, il.current_address + length)
+#     if untaken is None:
+#         untaken = LowLevelILLabel()
+#         untaken_found = False
+
+#     # generate the conditional branch LLIL
+#     if cond == 'eq':
+#         il.append(il.if_expr(il.compare_equal(4, il.reg(4, IReg[r2]), il.const(4, 0)), taken, untaken))
+#     elif cond == 'ne':
+#         il.append(il.if_expr(il.compare_not_equal(4, il.reg(4, IReg[r2]), il.const(4, 0)), taken, untaken))
+
+#     # generate a jump to the branch target if a label couldn't be found
+#     if not taken_found:
+#         il.mark_label(taken)
+#         il.append(il.jump(dest))
+
+#     # generate a label for the untaken branch
+#     if not untaken_found:
+#         il.mark_label(untaken)
+
 def s_helper(il, cond, r1, length):
     """
     Generate LLIL for set on condition instruction.
@@ -429,7 +467,7 @@ def s_helper(il, cond, r1, length):
     false = LowLevelILLabel()
 
     done_found = True
-    done = il.get_label_for_address(Architecture['clipper'], il.current_address + length)
+    done = il.get_label_for_address(il.arch, il.current_address + length)
     if done is None:
         done = LowLevelILLabel()
         done_found = False
@@ -458,7 +496,7 @@ def string_helper(il, body, length):
     loop = LowLevelILLabel()
 
     done_found = True
-    done = il.get_label_for_address(Architecture['clipper'], il.current_address + length)
+    done = il.get_label_for_address(il.arch, il.current_address + length)
     if done is None:
         done = LowLevelILLabel()
         done_found = False
@@ -489,7 +527,7 @@ def cmpc_helper(il, length):
     match = LowLevelILLabel()
 
     done_found = True
-    done = il.get_label_for_address(Architecture['clipper'], il.current_address + length)
+    done = il.get_label_for_address(il.arch, il.current_address + length)
     if done is None:
         done = LowLevelILLabel()
         done_found = False
@@ -526,13 +564,17 @@ def address_operand(il, r1, rx, constant, mode):
     if mode == AddressMode.RELATIVE:
         return il.reg(4, IReg[r1])
     elif mode == AddressMode.PC32 or mode == AddressMode.PC16:
-        return il.const(4, il.current_address + constant)
-    elif mode == AddressMode.ABS32 or mode == AddressMode.ABS16:
-        return il.const(4, constant)
-    elif mode == AddressMode.REL12 or mode == AddressMode.REL32:
-        return il.add(4, il.reg(4, IReg[r1]), il.const(4, constant))
+        return il.const_pointer(4, il.current_address + constant)
+    elif mode == AddressMode.ABS32:
+        return il.const_pointer(4, constant)
+    elif mode == AddressMode.ABS16:
+        return il.const_pointer(2, constant)
+    elif mode == AddressMode.REL12:
+        return il.add(4, il.reg(4, IReg[r1]), il.const(2, constant))
+    elif mode == AddressMode.REL32:
+        return il.add(4, il.reg(4, IReg[r1]), il.const_pointer(4, constant))
     elif mode == AddressMode.PCX:
-        return il.add(4, il.const(4, il.current_address), il.reg(4, IReg[rx]))
+        return il.add(4, il.const_pointer(4, il.current_address), il.reg(4, IReg[rx]))
     elif mode == AddressMode.RELX:
         return il.add(4, il.reg(4, IReg[r1]), il.reg(4, IReg[rx]))
 
@@ -663,6 +705,13 @@ InstructionIL = {
         il.set_reg_split(8, FPReg[r2 + 1], FPReg[r2 + 0], il.load(16, address_operand(il, r1, rx, constant, mode))),
     'b*': lambda il, r1, r2, rx, constant, mode, length:
         branch_helper(il, r2, address_operand(il, r1, rx, constant, mode), length),
+
+    # 'cdbeq': lambda il, r1, r2, rx, constant, mode, length:
+    #     cdb_helper(il, 'eq', r2, address_operand(il, r1, rx, constant, mode), length),
+    # 'cdbne': lambda il, r1, r2, rx, constant, mode, length:
+    #     cdb_helper(il, 'ne', r2, address_operand(il, r1, rx, constant, mode), length),
+    # 'db*': lambda il, r1, r2, rx, constant, mode, length:
+    #     branch_helper(il, r2, address_operand(il, r1, rx, constant, mode), length),
 
     'loadw': lambda il, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.load(4, address_operand(il, r1, rx, constant, mode))),
@@ -1071,18 +1120,26 @@ class CLIPPER(Architecture):
         if instr in ['ret', 'reti']:
             result.add_branch(BranchType.FunctionReturn)
         elif instr in ['b*', 'db*']:
+            if address is not None:
+                result.add_branch(BranchType.UnconditionalBranch if r2 == 0 else BranchType.TrueBranch, address)
+            else:
+                result.add_branch(BranchType.UnresolvedBranch)
             if r2 == 0:
-                if address is not None:
-                    result.add_branch(BranchType.UnconditionalBranch, address)
-                else:
-                    result.add_branch(BranchType.UnresolvedBranch)
-            elif address is not None:
-                result.add_branch(BranchType.TrueBranch, address)
                 result.add_branch(BranchType.FalseBranch, addr + length)
+        elif instr in ['cdb', 'cdbeq', 'cdbne']:
+            if address is not None:
+                result.add_branch(BranchType.TrueBranch, address)
+            else:
+                result.add_branch(BranchType.UnresolvedBranch)
+            result.add_branch(BranchType.FalseBranch, addr + length)
         elif instr == 'call' and address is not None:
                 result.add_branch(BranchType.CallDestination, address)
         elif instr == 'calls':
             result.add_branch(BranchType.SystemCall, constant)
+
+        # FIXME: https://github.com/Vector35/binaryninja-api/issues/866
+        if instr in ['db*', 'cdb', 'cdbeq', 'cdbne']:
+            result.branch_delay = True
 
         return result
 
