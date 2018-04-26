@@ -94,9 +94,10 @@ class BootFloppy(BinaryView):
                 elif par == 0xa:
                     # Diagnostic disk partition allocation is as follows:
                     #
-                    #   mod   content
+                    #   sapphire1.flp           sapphire2.flp           sapphire2.flp
+                    #   mod   content           mod   content           mod   content
                     #     0   FDMDISK
-                    #     2   Video
+                    #     2   GT/GT+/GTII         2   EDGE II/II+
                     #     3   Digitizer
                     #     4   Token Ring
                     #     5   Hard PC
@@ -112,7 +113,7 @@ class BootFloppy(BinaryView):
                     if b_uinitsize > 0: # unpacked fdmdisk module
                         self.add_auto_segment(b_loadaddr, b_loadsize, (start_block + 1) * 512, b_loadsize, SegmentFlag.SegmentContainsCode | SegmentFlag.SegmentReadable | SegmentFlag.SegmentExecutable)
                         self.add_auto_section('{:x}.{:x}.text'.format(par, mod), b_loadaddr, b_loadsize, SectionSemantics.ReadOnlyCodeSectionSemantics)
-                        self.add_auto_segment(b_uinitaddr, b_uinitsize, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
+                        self.add_auto_segment(b_uinitaddr, b_uinitsize, 0, 0, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
                         self.add_auto_section('{:x}.{:x}.bss'.format(par, mod), b_uinitaddr, b_uinitsize, SectionSemantics.ReadWriteDataSectionSemantics)
                         self.add_entry_point(b_entry)
 
