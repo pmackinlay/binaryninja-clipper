@@ -2,9 +2,9 @@ import struct
 import enum
 
 from binaryninja.architecture import Architecture
-from binaryninja.lowlevelil import LowLevelILLabel, ILRegister
+from binaryninja.lowlevelil import LowLevelILLabel, ILRegister, LLIL_TEMP
 from binaryninja.function import RegisterInfo, InstructionInfo, InstructionTextToken
-from binaryninja.log import log_error
+from binaryninja.log import log_error, log_warn
 from binaryninja.enums import (BranchType, InstructionTextTokenType, LowLevelILOperation, LowLevelILFlagCondition, FlagRole)
 
 class OperandType(enum.IntEnum):
@@ -178,13 +178,13 @@ Instructions = {
     # See: https://github.com/Vector35/binaryninja-api/issues/866
     # 0x4a:['cdb', address],
     # 0x4b:['cdb', address],
-    # 0x4c:['cdbeq', address, [OperandType.R2, OperandType.ADDR]],
-    # 0x4d:['cdbeq', address, [OperandType.R2, OperandType.ADDR]],
-    # 0x4e:['cdbne', address, [OperandType.R2, OperandType.ADDR]],
-    # 0x4f:['cdbne', address, [OperandType.R2, OperandType.ADDR]], #59e726
+    0x4c:['cdbeq', address, [OperandType.R2, OperandType.ADDR]],
+    0x4d:['cdbeq', address, [OperandType.R2, OperandType.ADDR]],
+    0x4e:['cdbne', address, [OperandType.R2, OperandType.ADDR]],
+    0x4f:['cdbne', address, [OperandType.R2, OperandType.ADDR]], #59e726
 
-    # 0x50:['db*', address, [OperandType.ADDR]],
-    # 0x51:['db*', address, [OperandType.ADDR]],
+    0x50:['db*', address, [OperandType.ADDR]],
+    0x51:['db*', address, [OperandType.ADDR]],
 
     0x60:['loadw', address, [OperandType.ADDR, OperandType.R2]],
 	0x61:['loadw', address, [OperandType.ADDR, OperandType.R2]],
@@ -378,7 +378,14 @@ def shift_helper(il, r1, r2, positive, negative, long, length):
     if not done_found:
         il.mark_label(done)
 
-def branch_helper(il, cond, dest, length):
+def il_append(il, data):
+    if isinstance(data, list):
+        for i in [i for i in data if i is not None]:
+            il.append(i)
+    elif data is not None:
+        il.append(data)
+
+def branch_helper(il, cond, dest, length, ds1_il=None, ds2_il=None):
     """
     Generate LLIL for conditional and unconditional branch instructions.
     """
@@ -389,7 +396,6 @@ def branch_helper(il, cond, dest, length):
         taken = il.get_label_for_address(il.arch, il[dest].constant)
 
     if cond != 0:
-
         # create taken target
         taken_found = True
         if taken is None:
@@ -404,7 +410,17 @@ def branch_helper(il, cond, dest, length):
             untaken_found = False
 
         # generate the conditional branch LLIL
-        il.append(il.if_expr(il.flag_condition(ConditionCodeMapping[cond]), taken, untaken))
+        if ds1_il is not None and ds2_il is not None:
+            # save the branch condition
+            il.append(il.set_reg(0, LLIL_TEMP(0), il.flag_condition(ConditionCodeMapping[cond])))
+
+            # delay slot instructions
+            il_append(il, ds1_il)
+            il_append(il, ds2_il)
+
+            il.append(il.if_expr(il.reg(0, LLIL_TEMP(0)), taken, untaken))
+        else:
+            il.append(il.if_expr(il.flag_condition(ConditionCodeMapping[cond]), taken, untaken))
 
         # generate a jump to the branch target if a label couldn't be found
         if not taken_found:
@@ -413,51 +429,65 @@ def branch_helper(il, cond, dest, length):
 
         # generate a label for the untaken branch
         if not untaken_found:
+            il.set_current_address(il.current_address + length)
             il.mark_label(untaken)
     else:
-        # handle unconditional branch
+        # delay slot instructions
+        if ds1_il is not None and ds2_il is not None:
+            il_append(il, ds1_il)
+            il_append(il, ds2_il)
+
+        # unconditional branch
         if taken is not None:
             il.append(il.goto(taken))
         else:
             il.append(il.jump(dest))
 
-# def cdb_helper(il, cond, r2, dest, length):
-#     """
-#     Generate LLIL for compare and delayed branch instructions.
-#     """
+def cdb_helper(il, cond, r2, dest, length, ds1_il, ds2_il):
+    """
+    Generate LLIL for compare and delayed branch instructions.
+    """
 
-#     # try to find a label for the branch target
-#     taken = None
-#     if il[dest].operation == LowLevelILOperation.LLIL_CONST:
-#         taken = il.get_label_for_address(il.arch, il[dest].constant)
+    # try to find a label for the branch target
+    taken = None
+    if il[dest].operation == LowLevelILOperation.LLIL_CONST:
+        taken = il.get_label_for_address(il.arch, il[dest].constant)
 
-#     # create taken target
-#     taken_found = True
-#     if taken is None:
-#         taken = LowLevelILLabel()
-#         taken_found = False
+    # create taken target
+    taken_found = True
+    if taken is None:
+        taken = LowLevelILLabel()
+        taken_found = False
 
-#     # create untaken target
-#     untaken_found = True
-#     untaken = il.get_label_for_address(il.arch, il.current_address + length)
-#     if untaken is None:
-#         untaken = LowLevelILLabel()
-#         untaken_found = False
+    # create untaken target
+    untaken_found = True
+    untaken = il.get_label_for_address(il.arch, il.current_address + length)
+    if untaken is None:
+        untaken = LowLevelILLabel()
+        untaken_found = False
 
-#     # generate the conditional branch LLIL
-#     if cond == 'eq':
-#         il.append(il.if_expr(il.compare_equal(4, il.reg(4, IReg[r2]), il.const(4, 0)), taken, untaken))
-#     elif cond == 'ne':
-#         il.append(il.if_expr(il.compare_not_equal(4, il.reg(4, IReg[r2]), il.const(4, 0)), taken, untaken))
+    # generate the condition LLIL
+    if cond == 'eq':
+        il.append(il.set_reg(0, LLIL_TEMP(0), il.compare_equal(4, il.reg(4, IReg[r2]), il.const(4, 0))))
+    elif cond == 'ne':
+        il.append(il.set_reg(0, LLIL_TEMP(0), il.compare_not_equal(4, il.reg(4, IReg[r2]), il.const(4, 0))))
 
-#     # generate a jump to the branch target if a label couldn't be found
-#     if not taken_found:
-#         il.mark_label(taken)
-#         il.append(il.jump(dest))
+    # insert the delay slot instructions
+    il.append(ds1_il)
+    il.append(ds2_il)
 
-#     # generate a label for the untaken branch
-#     if not untaken_found:
-#         il.mark_label(untaken)
+    # insert the branch
+    il.append(il.if_expr(il.reg(0, LLIL_TEMP(0)), taken, untaken))
+
+    # generate a jump to the branch target if a label couldn't be found
+    if not taken_found:
+        il.mark_label(taken)
+        il.append(il.jump(dest))
+
+    # generate a label for the untaken branch
+    if not untaken_found:
+        il.set_current_address(il.current_address + length)
+        il.mark_label(untaken)
 
 def s_helper(il, cond, r1, length):
     """
@@ -557,14 +587,14 @@ def cmpc_helper(il, length):
     if not done_found:
         il.mark_label(done)
 
-def address_operand(il, r1, rx, constant, mode):
+def address_operand(il, pc, r1, rx, constant, mode):
     """
     Generate LLIL to compute an effective address.
     """
     if mode == AddressMode.RELATIVE:
         return il.reg(4, IReg[r1])
     elif mode == AddressMode.PC32 or mode == AddressMode.PC16:
-        return il.const_pointer(4, il.current_address + constant)
+        return il.const_pointer(4, pc + constant)
     elif mode == AddressMode.ABS32:
         return il.const_pointer(4, constant)
     elif mode == AddressMode.ABS16:
@@ -574,92 +604,92 @@ def address_operand(il, r1, rx, constant, mode):
     elif mode == AddressMode.REL32:
         return il.add(4, il.reg(4, IReg[r1]), il.const_pointer(4, constant))
     elif mode == AddressMode.PCX:
-        return il.add(4, il.const_pointer(4, il.current_address), il.reg(4, IReg[rx]))
+        return il.add(4, il.const_pointer(4, pc), il.reg(4, IReg[rx]))
     elif mode == AddressMode.RELX:
         return il.add(4, il.reg(4, IReg[r1]), il.reg(4, IReg[rx]))
 
 # CLIPPER instruction Low Level Intermediate Language map
 InstructionIL = {
-    'noop': lambda il, r1, r2, rx, constant, mode, length:
+    'noop': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
-    'movwp': lambda il, r1, r2, rx, constant, mode, length:
+    'movwp': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, 'psw', il.reg(4, IReg[r2]), '*') if r1 == 0 else il.set_reg(4, 'ssw', il.reg(4, IReg[r2])),
-    'movpw': lambda il, r1, r2, rx, constant, mode, length:
+    'movpw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, 'psw' if r1 == 0 else 'ssw')),
-    'calls': lambda il, r1, r2, rx, constant, mode, length:
+    'calls': lambda il, pc, r1, r2, rx, constant, mode, length:
         # Should pass system call number (constant & 0x7f).
         # https://github.com/Vector35/binaryninja-api/issues/507
         [ 
             il.set_reg(1, '_sc', il.const(1, constant & 0x7f)),
             il.system_call()
         ],
-    'ret': lambda il, r1, r2, rx, constant, mode, length:
+    'ret': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.ret(il.pop(4)) if r2 == 15 else [
             il.ret(il.load(4, il.reg(4, IReg[r2]))),
             il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, 4)))
         ],
-    'pushw': lambda il, r1, r2, rx, constant, mode, length:
+    'pushw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.push(4, il.reg(4, IReg[r2])) if r1 == 15 else [
             il.store(4, il.sub(4, il.reg(4, IReg[r1]), il.const(4, 4)), il.reg(4, IReg[r2])),
             il.set_reg(4, IReg[r1], il.sub(4, il.reg(4, IReg[r1]), il.const(4, 4)))            
         ],
-    'popw': lambda il, r1, r2, rx, constant, mode, length:
+    'popw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.pop(4)) if r1 == 15 else [
             il.set_reg(4, IReg[r2], il.load(4, il.reg(4, IReg[r1]))),
             il.set_reg(4, IReg[r1], il.add(4, il.reg(4, IReg[r1]), il.const(4, 4))) if not r1 == r2 else None
         ],
 
     # fp operations
-    'adds': lambda il, r1, r2, rx, constant, mode, length:
+    'adds': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_add(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
-    'subs': lambda il, r1, r2, rx, constant, mode, length:
+    'subs': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_sub(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
-    'addd': lambda il, r1, r2, rx, constant, mode, length:
+    'addd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_add(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
-    'subd': lambda il, r1, r2, rx, constant, mode, length:
+    'subd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_sub(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
-    'movs': lambda il, r1, r2, rx, constant, mode, length:
+    'movs': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.reg(4, FPReg[r1])),
-    'cmps': lambda il, r1, r2, rx, constant, mode, length:
+    'cmps': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.float_sub(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), '*'),
-    'movd': lambda il, r1, r2, rx, constant, mode, length:
+    'movd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.reg(8, FPReg[r1])),
-    'cmpd': lambda il, r1, r2, rx, constant, mode, length:
+    'cmpd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.float_sub(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), '*'),
-    'muls': lambda il, r1, r2, rx, constant, mode, length:
+    'muls': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_mult(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
-    'divs': lambda il, r1, r2, rx, constant, mode, length:
+    'divs': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_div(4, il.reg(4, FPReg[r2]), il.reg(4, FPReg[r1]), 'f*')),
-    'muld': lambda il, r1, r2, rx, constant, mode, length:
+    'muld': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_mult(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
-    'divd': lambda il, r1, r2, rx, constant, mode, length:
+    'divd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_div(8, il.reg(8, FPReg[r2]), il.reg(8, FPReg[r1]), 'f*')),
-    'movsw': lambda il, r1, r2, rx, constant, mode, length:
+    'movsw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, FPReg[r1])),
-    'movws': lambda il, r1, r2, rx, constant, mode, length:
+    'movws': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.reg(4, IReg[r1])),
-    'movdl': lambda il, r1, r2, rx, constant, mode, length:
+    'movdl': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.reg(8, FPReg[r1])),
-    'movld': lambda il, r1, r2, rx, constant, mode, length:
+    'movld': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.reg_split(4, IReg[r1 + 1], IReg[r1 + 0])),
 
-    'shaw': lambda il, r1, r2, rx, constant, mode, length:
+    'shaw': lambda il, pc, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.shift_left, il.arith_shift_right, False, length),
-    'shal': lambda il, r1, r2, rx, constant, mode, length:
+    'shal': lambda il, pc, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.shift_left, il.arith_shift_right, True, length),
-    'shlw': lambda il, r1, r2, rx, constant, mode, length:
+    'shlw': lambda il, pc, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.shift_left, il.logical_shift_right, False, length),
-    'shll': lambda il, r1, r2, rx, constant, mode, length:
+    'shll': lambda il, pc, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.shift_left, il.logical_shift_right, True, length),
-    'rotw': lambda il, r1, r2, rx, constant, mode, length:
+    'rotw': lambda il, pc, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.rotate_left, il.rotate_right, False, length),
-    'rotl': lambda il, r1, r2, rx, constant, mode, length:
+    'rotl': lambda il, pc, r1, r2, rx, constant, mode, length:
         shift_helper(il, r1, r2, il.rotate_left, il.rotate_right, True, length),
-    'shai': lambda il, r1, r2, rx, constant, mode, length:
+    'shai': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], 
             il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc') if constant > 0 else
             il.arith_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), 'vc'), 'nz'),
-    'shali': lambda il, r1, r2, rx, constant, mode, length:
+    'shali': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.shift_left(
                 8, 
@@ -669,11 +699,11 @@ InstructionIL = {
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, -constant), 'vc'), 'nz'),
-    'shli': lambda il, r1, r2, rx, constant, mode, length:
+    'shli': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2],
             il.shift_left(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc') if constant > 0 else
             il.logical_shift_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), 'vc'), 'nz'),
-    'shlli': lambda il, r1, r2, rx, constant, mode, length:
+    'shlli': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.shift_left(
                 8, 
@@ -683,11 +713,11 @@ InstructionIL = {
                 8, 
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, -constant), 'vc'), 'nz'),
-    'roti': lambda il, r1, r2, rx, constant, mode, length:
+    'roti': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], 
             il.rotate_left(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc') if constant > 0 else
             il.rotate_right(4, il.reg(4, IReg[r2]), il.const(4, -constant), 'vc'), 'nz'),
-    'rotli': lambda il, r1, r2, rx, constant, mode, length:
+    'rotli': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], 
             il.rotate_left(
                 8, 
@@ -698,264 +728,264 @@ InstructionIL = {
                 il.reg_split(4, IReg[r2 + 1], IReg[r2 + 0]),
                 il.const(4, -constant), 'vc'), 'nz'),
     
-    'call': lambda il, r1, r2, rx, constant, mode, length:
+    'call': lambda il, pc, r1, r2, rx, constant, mode, length:
         # TODO: non-standard stack pointer
-        il.call(address_operand(il, r1, rx, constant, mode)) if r2 == 15 else il.unimplemented(),
-    'loadd2': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg_split(8, FPReg[r2 + 1], FPReg[r2 + 0], il.load(16, address_operand(il, r1, rx, constant, mode))),
-    'b*': lambda il, r1, r2, rx, constant, mode, length:
-        branch_helper(il, r2, address_operand(il, r1, rx, constant, mode), length),
+        il.call(address_operand(il, pc, r1, rx, constant, mode)) if r2 == 15 else il.unimplemented(),
+    'loadd2': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg_split(8, FPReg[r2 + 1], FPReg[r2 + 0], il.load(16, address_operand(il, pc, r1, rx, constant, mode))),
+    'b*': lambda il, pc, r1, r2, rx, constant, mode, length:
+        branch_helper(il, r2, address_operand(il, pc, r1, rx, constant, mode), length),
 
-    # 'cdbeq': lambda il, r1, r2, rx, constant, mode, length:
-    #     cdb_helper(il, 'eq', r2, address_operand(il, r1, rx, constant, mode), length),
-    # 'cdbne': lambda il, r1, r2, rx, constant, mode, length:
-    #     cdb_helper(il, 'ne', r2, address_operand(il, r1, rx, constant, mode), length),
-    # 'db*': lambda il, r1, r2, rx, constant, mode, length:
-    #     branch_helper(il, r2, address_operand(il, r1, rx, constant, mode), length),
+    'cdbeq': lambda il, pc, r1, r2, rx, constant, mode, length, ds1_il, ds2_il:
+        cdb_helper(il, 'eq', r2, address_operand(il, pc, r1, rx, constant, mode), length, ds1_il, ds2_il),
+    'cdbne': lambda il, pc, r1, r2, rx, constant, mode, length, ds1_il, ds2_il:
+        cdb_helper(il, 'ne', r2, address_operand(il, pc, r1, rx, constant, mode), length, ds1_il, ds2_il),
+    'db*': lambda il, pc, r1, r2, rx, constant, mode, length, ds1_il, ds2_il:
+        branch_helper(il, r2, address_operand(il, pc, r1, rx, constant, mode), length, ds1_il, ds2_il),
 
-    'loadw': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.load(4, address_operand(il, r1, rx, constant, mode))),
-    'loada': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], address_operand(il, r1, rx, constant, mode)),
-    'loads': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(8, FPReg[r2], il.load(4, address_operand(il, r1, rx, constant, mode))),
-    'loadd': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(8, FPReg[r2], il.load(8, address_operand(il, r1, rx, constant, mode))),
-    'loadb': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sign_extend(4, il.load(1, address_operand(il, r1, rx, constant, mode)))),
-    'loadbu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.zero_extend(4, il.load(1, address_operand(il, r1, rx, constant, mode)))),
-    'loadh': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.sign_extend(4, il.load(2, address_operand(il, r1, rx, constant, mode)))),
-    'loadhu': lambda il, r1, r2, rx, constant, mode, length:
-        il.set_reg(4, IReg[r2], il.zero_extend(4, il.load(2, address_operand(il, r1, rx, constant, mode)))),
+    'loadw': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.load(4, address_operand(il, pc, r1, rx, constant, mode))),
+    'loada': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], address_operand(il, pc, r1, rx, constant, mode)),
+    'loads': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.load(4, address_operand(il, pc, r1, rx, constant, mode))),
+    'loadd': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(8, FPReg[r2], il.load(8, address_operand(il, pc, r1, rx, constant, mode))),
+    'loadb': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.sign_extend(4, il.load(1, address_operand(il, pc, r1, rx, constant, mode)))),
+    'loadbu': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.zero_extend(4, il.load(1, address_operand(il, pc, r1, rx, constant, mode)))),
+    'loadh': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.sign_extend(4, il.load(2, address_operand(il, pc, r1, rx, constant, mode)))),
+    'loadhu': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.set_reg(4, IReg[r2], il.zero_extend(4, il.load(2, address_operand(il, pc, r1, rx, constant, mode)))),
 
-    'storw': lambda il, r1, r2, rx, constant, mode, length:
-        il.store(4, address_operand(il, r1, rx, constant, mode), il.reg(4, IReg[r2])),
-    'tsts': lambda il, r1, r2, rx, constant, mode, length: [
-        il.set_reg(4, IReg[r2], il.load(4, address_operand(il, r1, rx, constant, mode))),
-        il.store(4, address_operand(il, r1, rx, constant, mode), il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, 0x80000000)))
+    'storw': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.store(4, address_operand(il, pc, r1, rx, constant, mode), il.reg(4, IReg[r2])),
+    'tsts': lambda il, pc, r1, r2, rx, constant, mode, length: [
+        il.set_reg(4, IReg[r2], il.load(4, address_operand(il, pc, r1, rx, constant, mode))),
+        il.store(4, address_operand(il, pc, r1, rx, constant, mode), il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, 0x80000000)))
     ],
-    'stors': lambda il, r1, r2, rx, constant, mode, length:
-        il.store(4, address_operand(il, r1, rx, constant, mode), il.reg(4, FPReg[r2])),
-    'stord': lambda il, r1, r2, rx, constant, mode, length:
-        il.store(8, address_operand(il, r1, rx, constant, mode), il.reg(8, FPReg[r2])),
-    'storb': lambda il, r1, r2, rx, constant, mode, length:
-        il.store(1, address_operand(il, r1, rx, constant, mode), il.reg(1, IReg[r2])),
-    'storh': lambda il, r1, r2, rx, constant, mode, length:
-        il.store(2, address_operand(il, r1, rx, constant, mode), il.reg(2, IReg[r2])),
+    'stors': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.store(4, address_operand(il, pc, r1, rx, constant, mode), il.reg(4, FPReg[r2])),
+    'stord': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.store(8, address_operand(il, pc, r1, rx, constant, mode), il.reg(8, FPReg[r2])),
+    'storb': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.store(1, address_operand(il, pc, r1, rx, constant, mode), il.reg(1, IReg[r2])),
+    'storh': lambda il, pc, r1, r2, rx, constant, mode, length:
+        il.store(2, address_operand(il, pc, r1, rx, constant, mode), il.reg(2, IReg[r2])),
         
-    'addw': lambda il, r1, r2, rx, constant, mode, length:
+    'addw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'),
-    'addq': lambda il, r1, r2, rx, constant, mode, length:
+    'addq': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, r1), 'vc'), 'nz'),
-    'addi': lambda il, r1, r2, rx, constant, mode, length:
+    'addi': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.add(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc'), 'nz'),
-    'movw': lambda il, r1, r2, rx, constant, mode, length:
+    'movw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.reg(4, IReg[r1]), '*'),
-    'loadq': lambda il, r1, r2, rx, constant, mode, length:
+    'loadq': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, r1), '*'),
-    'loadi': lambda il, r1, r2, rx, constant, mode, length:
+    'loadi': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, constant), '*'),
-    'andw': lambda il, r1, r2, rx, constant, mode, length:
+    'andw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
-    'andi': lambda il, r1, r2, rx, constant, mode, length:
+    'andi': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.and_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
-    'orw': lambda il, r1, r2, rx, constant, mode, length:
+    'orw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1])), '*'),
-    'ori': lambda il, r1, r2, rx, constant, mode, length:
+    'ori': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.or_expr(4, il.reg(4, IReg[r2]), il.const(4, constant)), '*'),
 
-    'addwc': lambda il, r1, r2, rx, constant, mode, length:
+    'addwc': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.add_carry(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), 'vc'), 'nz'),
-    'subwc': lambda il, r1, r2, rx, constant, mode, length:
+    'subwc': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.sub_borrow(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), il.flag('c'), 'vc'), 'nz'),
-    'negw': lambda il, r1, r2, rx, constant, mode, length:
+    'negw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.neg_expr(4, il.reg(4, IReg[r1]), 'vc'), 'nz'),
-    'mulw': lambda il, r1, r2, rx, constant, mode, length:
+    'mulw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'mulwx': lambda il, r1, r2, rx, constant, mode, length:
+    'mulwx': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.mult_double_prec_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'mulwu': lambda il, r1, r2, rx, constant, mode, length:
+    'mulwu': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.mult(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'mulwux': lambda il, r1, r2, rx, constant, mode, length:
+    'mulwux': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg_split(4, IReg[r2 + 1], IReg[r2 + 0], il.mult_double_prec_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'divw': lambda il, r1, r2, rx, constant, mode, length:
+    'divw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.div_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'modw': lambda il, r1, r2, rx, constant, mode, length:
+    'modw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.mod_signed(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'divwu': lambda il, r1, r2, rx, constant, mode, length:
+    'divwu': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.div_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
-    'modwu': lambda il, r1, r2, rx, constant, mode, length:
+    'modwu': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.mod_unsigned(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*')),
         
-    'subw': lambda il, r1, r2, rx, constant, mode, length:
+    'subw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'),
-    'subq': lambda il, r1, r2, rx, constant, mode, length:
+    'subq': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, r1), 'vc'), 'nz'),
-    'subi': lambda il, r1, r2, rx, constant, mode, length:
+    'subi': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc'), 'nz'),
-    'cmpw': lambda il, r1, r2, rx, constant, mode, length:
+    'cmpw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), '*'),
-    'cmpq': lambda il, r1, r2, rx, constant, mode, length:
+    'cmpq': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.const(4, r1), '*'),
-    'cmpi': lambda il, r1, r2, rx, constant, mode, length:
+    'cmpi': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.sub(4, il.reg(4, IReg[r2]), il.const(4, constant), '*'),
-    'xorw': lambda il, r1, r2, rx, constant, mode, length:
+    'xorw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.reg(4, IReg[r1]), 'vc'), 'nz'),
-    'xori': lambda il, r1, r2, rx, constant, mode, length:
+    'xori': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.xor_expr(4, il.reg(4, IReg[r2]), il.const(4, constant), 'vc'), 'nz'),
-    'notw': lambda il, r1, r2, rx, constant, mode, length:
+    'notw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.not_expr(4, il.reg(4, IReg[r1]), 'vc'), 'nz'),
-    'notq': lambda il, r1, r2, rx, constant, mode, length:
+    'notq': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.const(4, ~r1), '*'),
 
-    'abss': lambda il, r1, r2, rx, constant, mode, length:
+    'abss': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_abs(4, il.reg(4, FPReg[r1]))),
-    'absd': lambda il, r1, r2, rx, constant, mode, length:
+    'absd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_abs(8, il.reg(8, FPReg[r1]))),
 
-    'waitd': lambda il, r1, r2, rx, constant, mode, length:
+    'waitd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
-    's*': lambda il, r1, r2, rx, constant, mode, length:
+    's*': lambda il, pc, r1, r2, rx, constant, mode, length:
         s_helper(il, r2, r1, length),
 
     # macro instructions
-    'savew0': lambda il, r1, r2, rx, constant, mode, length:
+    'savew0': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, -1, -1) ],
-    'savew1': lambda il, r1, r2, rx, constant, mode, length:
+    'savew1': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 0, -1) ],
-    'savew2': lambda il, r1, r2, rx, constant, mode, length:
+    'savew2': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 1, -1) ],
-    'savew3': lambda il, r1, r2, rx, constant, mode, length:
+    'savew3': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 2, -1) ],
-    'savew4': lambda il, r1, r2, rx, constant, mode, length:
+    'savew4': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 3, -1) ],
-    'savew5': lambda il, r1, r2, rx, constant, mode, length:
+    'savew5': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 4, -1) ],
-    'savew6': lambda il, r1, r2, rx, constant, mode, length:
+    'savew6': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 5, -1) ],
-    'savew7': lambda il, r1, r2, rx, constant, mode, length:
+    'savew7': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 6, -1) ],
-    'savew8': lambda il, r1, r2, rx, constant, mode, length:
+    'savew8': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 7, -1) ],
-    'savew9': lambda il, r1, r2, rx, constant, mode, length:
+    'savew9': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 8, -1) ],
-    'savew10': lambda il, r1, r2, rx, constant, mode, length:
+    'savew10': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 9, -1) ],
-    'savew11': lambda il, r1, r2, rx, constant, mode, length:
+    'savew11': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 10, -1) ],
-    'savew12': lambda il, r1, r2, rx, constant, mode, length:
+    'savew12': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(4, il.reg(4, IReg[i])) for i in range(14, 11, -1) ],
-    'movc': lambda il, r1, r2, rx, constant, mode, length:
+    'movc': lambda il, pc, r1, r2, rx, constant, mode, length:
         string_helper(il, [
             il.store(1, il.reg(4, IReg[2]), il.load(1, il.reg(4, IReg[1]))),
             il.set_reg(4, IReg[1], il.add(4, il.reg(4, IReg[1]), il.const(4, 1))),
             il.set_reg(4, IReg[2], il.add(4, il.reg(4, IReg[2]), il.const(4, 1))),
             il.set_reg(4, IReg[0], il.sub(4, il.reg(4, IReg[0]), il.const(4, 1)))
         ], length),
-    'initc': lambda il, r1, r2, rx, constant, mode, length:
+    'initc': lambda il, pc, r1, r2, rx, constant, mode, length:
         string_helper(il, [
             il.store(1, il.reg(4, IReg[1]), il.reg(1, IReg[2])),
             il.set_reg(4, IReg[1], il.add(4, il.reg(4, IReg[1]), il.const(4, 1))),
             il.set_reg(4, IReg[2], il.rotate_right(4, il.reg(4, IReg[2]), il.const(4, 8))),
             il.set_reg(4, IReg[0], il.sub(4, il.reg(4, IReg[0]), il.const(4, 1)))
         ], length),
-    'cmpc': lambda il, r1, r2, rx, constant, mode, length:
+    'cmpc': lambda il, pc, r1, r2, rx, constant, mode, length:
         cmpc_helper(il, length),
-    'restw0': lambda il, r1, r2, rx, constant, mode, length:
+    'restw0': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(0, 15) ],
-    'restw1': lambda il, r1, r2, rx, constant, mode, length:
+    'restw1': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(1, 15) ],
-    'restw2': lambda il, r1, r2, rx, constant, mode, length:
+    'restw2': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(2, 15) ],
-    'restw3': lambda il, r1, r2, rx, constant, mode, length:
+    'restw3': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(3, 15) ],
-    'restw4': lambda il, r1, r2, rx, constant, mode, length:
+    'restw4': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(4, 15) ],
-    'restw5': lambda il, r1, r2, rx, constant, mode, length:
+    'restw5': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(5, 15) ],
-    'restw6': lambda il, r1, r2, rx, constant, mode, length:
+    'restw6': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(6, 15) ],
-    'restw7': lambda il, r1, r2, rx, constant, mode, length:
+    'restw7': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(7, 15) ],
-    'restw8': lambda il, r1, r2, rx, constant, mode, length:
+    'restw8': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(8, 15) ],
-    'restw9': lambda il, r1, r2, rx, constant, mode, length:
+    'restw9': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(9, 15) ],
-    'restw10': lambda il, r1, r2, rx, constant, mode, length:
+    'restw10': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(10, 15) ],
-    'restw11': lambda il, r1, r2, rx, constant, mode, length:
+    'restw11': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(11, 15) ],
-    'restw12': lambda il, r1, r2, rx, constant, mode, length:
+    'restw12': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(4, IReg[i], il.pop(4)) for i in range(12, 15) ],
     
-    'saved0': lambda il, r1, r2, rx, constant, mode, length:
+    'saved0': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, -1, -1) ],
-	'saved1': lambda il, r1, r2, rx, constant, mode, length:
+	'saved1': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 0, -1) ],
-	'saved2': lambda il, r1, r2, rx, constant, mode, length:
+	'saved2': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 1, -1) ],
-	'saved3': lambda il, r1, r2, rx, constant, mode, length:
+	'saved3': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 2, -1) ],
-	'saved4': lambda il, r1, r2, rx, constant, mode, length:
+	'saved4': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 3, -1) ],
-	'saved5': lambda il, r1, r2, rx, constant, mode, length:
+	'saved5': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 4, -1) ],
-	'saved6': lambda il, r1, r2, rx, constant, mode, length:
+	'saved6': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 5, -1) ],
-	'saved7': lambda il, r1, r2, rx, constant, mode, length:
+	'saved7': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.push(8, il.reg(8, FPReg[i])) for i in range(7, 6, -1) ],
-	'restd0': lambda il, r1, r2, rx, constant, mode, length:
+	'restd0': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(0, 8) ],
-	'restd1': lambda il, r1, r2, rx, constant, mode, length:
+	'restd1': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(1, 8) ],
-	'restd2': lambda il, r1, r2, rx, constant, mode, length:
+	'restd2': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(2, 8) ],
-	'restd3': lambda il, r1, r2, rx, constant, mode, length:
+	'restd3': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(3, 8) ],
-	'restd4': lambda il, r1, r2, rx, constant, mode, length:
+	'restd4': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(4, 8) ],
-	'restd5': lambda il, r1, r2, rx, constant, mode, length:
+	'restd5': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(5, 8) ],
-	'restd6': lambda il, r1, r2, rx, constant, mode, length:
+	'restd6': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(6, 8) ],
-	'restd7': lambda il, r1, r2, rx, constant, mode, length:
+	'restd7': lambda il, pc, r1, r2, rx, constant, mode, length:
         [il.set_reg(8, FPReg[i], il.pop(8)) for i in range(7, 8) ],
 
     # TODO: non-standard floating point rounding instructions
-    'cnvsw': lambda il, r1, r2, rx, constant, mode, length:
+    'cnvsw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.float_to_int(4, il.reg(4, FPReg[r1]), 'fxi')),
-	#'cnvrsw': lambda il, r1, r2, rx, constant, mode, length:
-	'cnvtsw': lambda il, r1, r2, rx, constant, mode, length:
+	#'cnvrsw': lambda il, pc, r1, r2, rx, constant, mode, length:
+	'cnvtsw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.float_trunc(4, il.reg(4, FPReg[r1]), 'fxi')),
-	'cnvws': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvws': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.int_to_float(4, il.reg(4, IReg[r1]), 'fx')),
-	'cnvdw': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvdw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.float_to_int(4, il.reg(8, FPReg[r1]), 'fxi')),
-	#'cnvrdw': lambda il, r1, r2, rx, constant, mode, length:
-	'cnvtdw': lambda il, r1, r2, rx, constant, mode, length:
+	#'cnvrdw': lambda il, pc, r1, r2, rx, constant, mode, length:
+	'cnvtdw': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, IReg[r2], il.float_trunc(4, il.reg(8, FPReg[r1]), 'fxi')),
-	'cnvwd': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvwd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.int_to_float(8, il.reg(4, IReg[r1]))),
-	'cnvsd': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvsd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_convert(8, il.reg(4, FPReg[r1]), 'fi')),
-	'cnvds': lambda il, r1, r2, rx, constant, mode, length:
+	'cnvds': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_convert(4, il.reg(8, FPReg[r1]), 'fxuvi')),
-    'negs': lambda il, r1, r2, rx, constant, mode, length:
+    'negs': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(4, FPReg[r2], il.float_neg(4, il.reg(4, FPReg[r1]))),
-    'negd': lambda il, r1, r2, rx, constant, mode, length:
+    'negd': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.set_reg(8, FPReg[r2], il.float_neg(8, il.reg(8, FPReg[r1]))),
 
-    'movus': lambda il, r1, r2, rx, constant, mode, length:
+    'movus': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
-    'movsu': lambda il, r1, r2, rx, constant, mode, length:
+    'movsu': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
-    'saveur': lambda il, r1, r2, rx, constant, mode, length:
+    'saveur': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
-    'restur': lambda il, r1, r2, rx, constant, mode, length:
+    'restur': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
-    'reti': lambda il, r1, r2, rx, constant, mode, length:
+    'reti': lambda il, pc, r1, r2, rx, constant, mode, length:
         [
             il.set_reg(4, SReg[0], il.pop(4)),
             il.set_reg(4, SReg[1], il.pop(4)),
@@ -967,7 +997,7 @@ InstructionIL = {
             il.set_reg(4, IReg[r1], il.add(4, il.reg(4, IReg[r1]), il.const(4, 12)))
         ],
 
-    'wait': lambda il, r1, r2, rx, constant, mode, length:
+    'wait': lambda il, pc, r1, r2, rx, constant, mode, length:
         il.nop(),
 }
 
@@ -975,6 +1005,9 @@ class CLIPPER(Architecture):
     name = 'clipper'
     address_size = 4
     instr_alignment = 2
+
+    # FIXME: allow for up to 3 instructions (1 + 2 delay slots)
+    max_instr_length = 8 * 3
 
     regs = {
         'r0': RegisterInfo('r0', 4),
@@ -1070,7 +1103,7 @@ class CLIPPER(Architecture):
     #   list of operand types
     #   total length of opcode and operands
     def decode_instruction(self, data, addr):
-        error_value = (None, None, None, None, None, None, None, None, None)
+        error_value = (None, None, None, None, None, None, None, None)
 
         # minimum instruction size is 2 bytes
         if len(data) < 2:
@@ -1087,7 +1120,7 @@ class CLIPPER(Architecture):
 
         # check for invalid opcodes
         if instr is None:
-            log_error('[{:x}] Bad opcode: {:x}'.format(addr, parcel0))
+            log_warn('[{:x}] Bad opcode: {:x}'.format(addr, parcel0))
             return error_value
 
         # decode the operands
@@ -1095,26 +1128,43 @@ class CLIPPER(Architecture):
 
         # check for invalid operands
         if length is None:
-            log_error('[{:x}] Bad operands: {:x}'.format(addr, parcel0))
+            log_warn('[{:x}] Bad operands: {:x}'.format(addr, parcel0))
             return error_value
 
-        address = None
-        if mode is not None:
-            if mode == AddressMode.PC16 or mode == AddressMode.PC32:
-                address = addr + constant
-            elif mode == AddressMode.ABS16 or mode == AddressMode.ABS32:
-                address = constant
-
-        return instr[0], r1, r2, rx, constant, mode, instr[2], length, address
+        return instr[0], r1, r2, rx, constant, mode, instr[2], length
 
     def get_instruction_info(self, data, addr):
-        (instr, _, r2, _, constant, _, _, length, address) = self.decode_instruction(data, addr)
+        (instr, _, r2, _, constant, mode, _, length) = self.decode_instruction(data, addr)
 
         if instr is None:
             return None
 
         result = InstructionInfo()
-        result.length = length
+
+        # FIXME: workaround for https://github.com/Vector35/binaryninja-api/issues/866
+        # decode length of delay slot instructions
+        if instr in ['db*', 'cdb', 'cdbeq', 'cdbne']:
+            try:
+                (ds1_instr, _, ds1_r2, _, ds1_constant, ds1_mode, _, ds1_length) = self.decode_instruction(data[length:], addr + length)
+                (ds2_instr, ds2_r1, ds2_r2, _, _, _, _, ds2_length) = self.decode_instruction(data[length+ds1_length:], addr + length + ds1_length)
+
+                result.length = length + ds1_length + ds2_length
+
+                # handle 'db, loada, pushw' idiom as a call instruction
+                if (ds1_instr == 'loada' and (ds1_mode == AddressMode.PC16 or ds1_mode == AddressMode.PC32) and ds1_constant == ds1_length + ds2_length
+                    ds2_instr == 'pushw' and ds1_r2 == ds2_r2 and ds2_r1 == 15:
+                    instr = 'call'
+            except:
+                return None
+        else:
+            result.length = length
+
+        # compute constant addresses
+        address = None
+        if mode == AddressMode.PC16 or mode == AddressMode.PC32:
+            address = addr + constant
+        elif mode == AddressMode.ABS16 or mode == AddressMode.ABS32:
+            address = constant
 
         # add branches
         if instr in ['ret', 'reti']:
@@ -1124,27 +1174,26 @@ class CLIPPER(Architecture):
                 result.add_branch(BranchType.UnconditionalBranch if r2 == 0 else BranchType.TrueBranch, address)
             else:
                 result.add_branch(BranchType.UnresolvedBranch)
-            if r2 == 0:
-                result.add_branch(BranchType.FalseBranch, addr + length)
+            if r2 != 0:
+                result.add_branch(BranchType.FalseBranch, addr + result.length)
         elif instr in ['cdb', 'cdbeq', 'cdbne']:
             if address is not None:
                 result.add_branch(BranchType.TrueBranch, address)
             else:
                 result.add_branch(BranchType.UnresolvedBranch)
-            result.add_branch(BranchType.FalseBranch, addr + length)
-        elif instr == 'call' and address is not None:
+            result.add_branch(BranchType.FalseBranch, addr + result.length)
+        elif instr == 'call':
+            if address is not None:
                 result.add_branch(BranchType.CallDestination, address)
+            else:
+                result.add_branch(BranchType.UnresolvedBranch)
         elif instr == 'calls':
             result.add_branch(BranchType.SystemCall, constant)
-
-        # FIXME: https://github.com/Vector35/binaryninja-api/issues/866
-        if instr in ['db*', 'cdb', 'cdbeq', 'cdbne']:
-            result.branch_delay = True
 
         return result
 
     def get_instruction_text(self, data, addr):
-        (instr, r1, r2, rx, constant, mode, operand_list, length, _) = self.decode_instruction(data, addr)
+        (instr, r1, r2, rx, constant, mode, operand_list, length) = self.decode_instruction(data, addr)
 
         if instr is None:
             return None
@@ -1222,21 +1271,36 @@ class CLIPPER(Architecture):
         return tokens, length
 
     def get_instruction_low_level_il(self, data, addr, il):
-        (instr, r1, r2, rx, constant, mode, _, length, _) = self.decode_instruction(data, addr)
+        (instr, r1, r2, rx, constant, mode, _, length) = self.decode_instruction(data, addr)
 
         if instr is None:
             return None
 
-        if InstructionIL.get(instr) is None:
-            log_error('[0x{:4x}]: {} not implemented'.format(addr, instr))
-            il.append(il.unimplemented())
+        if InstructionIL.get(instr) is not None:
+            if instr in ['db*', 'cdb', 'cdbeq', 'cdbne']:
+                # decode and lift delay slot instructions
+                (ds1_instr, ds1_r1, ds1_r2, ds1_rx, ds1_constant, ds1_mode, _, ds1_length) = self.decode_instruction(data[length:], addr + length)
+                (ds2_instr, ds2_r1, ds2_r2, ds2_rx, ds2_constant, ds2_mode, _, ds2_length) = self.decode_instruction(data[length+ds1_length:], addr + length + ds1_length)
+
+                ds1_il = InstructionIL[ds1_instr](il, addr + length, ds1_r1, ds1_r2, ds1_rx, ds1_constant, ds1_mode, ds1_length)
+                ds2_il = InstructionIL[ds2_instr](il, addr + length + ds1_length, ds2_r1, ds2_r2, ds2_rx, ds2_constant, ds2_mode, ds2_length)
+
+                length += ds1_length + ds2_length
+
+                # handle 'db, loada, pushw' idiom as a call instruction
+                if (instr == 'db*' and r2 == 0 and 
+                    ds1_instr == 'loada' and (ds1_mode == AddressMode.PC16 or ds1_mode == AddressMode.PC32) and ds1_constant == ds1_length + ds2_length and 
+                    ds2_instr == 'pushw' and ds1_r2 == ds2_r2 and ds2_r1 == 15):
+                    il_instr = InstructionIL['call'](il, il.current_address, r1, ds2_r1, rx, constant, mode, length)
+                else:
+                    il_instr = InstructionIL[instr](il, il.current_address, r1, r2, rx, constant, mode, length, ds1_il, ds2_il)
+            else:
+                il_instr = InstructionIL[instr](il, il.current_address, r1, r2, rx, constant, mode, length)
+
+            il_append(il, il_instr)
         else:
-            il_instr = InstructionIL[instr](il, r1, r2, rx, constant, mode, length)
-            if isinstance(il_instr, list):
-                for i in [i for i in il_instr if i is not None]:
-                    il.append(i)
-            elif il_instr is not None:
-                il.append(il_instr)
+            log_warn('[0x{:4x}]: {} not implemented'.format(addr, instr))
+            il.append(il.unimplemented())
 
         return length
 

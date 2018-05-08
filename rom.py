@@ -76,7 +76,7 @@ class ROM(BinaryView):
             self.add_entry_point(self.rom_start)
 
             # create an unpacked segment and section if necessary
-            if self.unpacked_size > 0:
+            if hasattr(self, 'unpacked_size'):
                 self.add_auto_segment(self.unpacked_addr, self.unpacked_size, self.rom_size, actual_unpacked_size, SegmentFlag.SegmentContainsData | SegmentFlag.SegmentReadable | SegmentFlag.SegmentWritable)
                 self.add_auto_section('.unpacked', self.unpacked_addr, self.unpacked_size, SectionSemantics.ReadWriteDataSectionSemantics)
 

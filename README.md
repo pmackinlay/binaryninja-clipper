@@ -1,4 +1,4 @@
-# CLIPPER Architecture Plugin (v0.4)
+# CLIPPER Architecture Plugin (v0.5)
 Author: **Patrick Mackinlay**
 
 _A disassembler and lifter for the CLIPPER architecture, and loaders for
@@ -18,7 +18,8 @@ system monitor, blue screen utility and diagnostic code contained).
 The CLIPPER architecture plugin has the following known issues:
 
 * Stack operations using registers other than r15 are not implemented.
-* Some C400 instructions are unimplemented, especially delayed branches.
+* C400 delayed branch instructions are implemented using a number of crude
+workarounds until the API provides better native support.
 
 The COFF binary view has the following known issues:
 
@@ -38,9 +39,9 @@ To install this plugin, navigate to your Binary Ninja plugins directory, and run
 
 ## Minimum Version
 
-This plugin requires the following minimum version of Binary Ninja:
+This plugin have been developed and tested on the following version of Binary Ninja:
 
- * 1.1.1150
+ * 1.1.1198
 
 ## License
 
