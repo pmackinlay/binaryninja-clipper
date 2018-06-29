@@ -34,7 +34,9 @@ class ROM(BinaryView):
         if len(header) < 16:
             return False
 
-        if header[4:8] == 'BoB!': # Turquoise EPROM
+        if header[4:8] == 'Kate': # Emerald EPROM
+            return True
+        elif header[4:8] == 'BoB!': # Turquoise EPROM
             return True
         elif header[8:12] == 'SapH': # Sapphire EPROM
             return True
@@ -49,7 +51,11 @@ class ROM(BinaryView):
         try:
             # determine key parameters based on signature
             header = self.parent_view.read(0, 16)
-            if header[4:8] == 'BoB!':
+            if header[4:8] == 'Kate':
+                # Emerald EPROM
+                self.rom_start = 0x7f100000
+                self.rom_size = 0x40000
+            elif header[4:8] == 'BoB!':
                 # Turquoise EPROM
                 self.rom_start = 0x7f100000
                 self.rom_size = 0x40000

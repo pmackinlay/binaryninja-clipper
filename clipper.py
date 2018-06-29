@@ -1151,8 +1151,8 @@ class CLIPPER(Architecture):
                 result.length = length + ds1_length + ds2_length
 
                 # handle 'db, loada, pushw' idiom as a call instruction
-                if (ds1_instr == 'loada' and (ds1_mode == AddressMode.PC16 or ds1_mode == AddressMode.PC32) and ds1_constant == ds1_length + ds2_length
-                    ds2_instr == 'pushw' and ds1_r2 == ds2_r2 and ds2_r1 == 15:
+                if (ds1_instr == 'loada' and (ds1_mode == AddressMode.PC16 or ds1_mode == AddressMode.PC32) and ds1_constant == ds1_length + ds2_length and
+                    ds2_instr == 'pushw' and ds1_r2 == ds2_r2 and ds2_r1 == 15):
                     instr = 'call'
             except:
                 return None
@@ -1162,7 +1162,7 @@ class CLIPPER(Architecture):
         # compute constant addresses
         address = None
         if mode == AddressMode.PC16 or mode == AddressMode.PC32:
-            address = addr + constant
+            address = (addr + constant) & 0xffffffff
         elif mode == AddressMode.ABS16 or mode == AddressMode.ABS32:
             address = constant
 
@@ -1239,7 +1239,7 @@ class CLIPPER(Architecture):
                         InstructionTextToken(InstructionTextTokenType.RegisterToken, IReg[r1]),
                         InstructionTextToken(InstructionTextTokenType.TextToken, ')')]
                 elif mode == AddressMode.PC32 or mode == AddressMode.PC16:
-                    tokens += [InstructionTextToken(InstructionTextTokenType.PossibleAddressToken, hex(addr + constant), addr + constant)]
+                    tokens += [InstructionTextToken(InstructionTextTokenType.PossibleAddressToken, hex((addr + constant) & 0xffffffff), (addr + constant) & 0xffffffff)]
                 elif mode == AddressMode.ABS32 or mode == AddressMode.ABS16:
                     tokens += [InstructionTextToken(InstructionTextTokenType.PossibleAddressToken, hex(constant), constant)]
                 elif mode == AddressMode.REL32 or mode == AddressMode.REL12:
